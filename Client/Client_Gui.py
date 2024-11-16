@@ -15,7 +15,7 @@ class ClientGUI:
         self.username = None
         self.connected = False
         self.symmetric_key = None
-        self.current_room = None  # Tracks the current room the user is in
+        self.rooms = []
 
         self.root = tk.Tk()
         self.root.title("Chat Client")
@@ -105,19 +105,23 @@ class ClientGUI:
     def send_message(self):
         message = self.input_entry.get()
         if message.startswith("/join "):
-            self.current_room = message.split(" ", 1)[1]  # Update the current room
-            self.text_widget.insert(tk.END, f"Joined room: {self.current_room}\n")  # Show message locally
+            room_name = message.split(" ", 1)[1].strip()
+            if room_name not in self.rooms:
+                self.rooms.append(room_name)
+                self.text_widget.insert(tk.END, f"Joined room: {room_name}\n")
             self.client_socket.send(self.encrypt_message(message))
-        elif message.startswith("/leave"):
+        elif message.startswith("/leave "):
+            room_name = message.split(" ", 1)[1].strip()
+            if room_name in self.rooms:
+                self.rooms.remove(room_name)
+                self.text_widget.insert(tk.END, f"Left room: {room_name}\n")
             self.client_socket.send(self.encrypt_message(message))
-            self.text_widget.insert(tk.END, "Left the room\n")  # Show message locally
-            self.current_room = None
         elif message:
-            if not self.current_room:
+            if not self.rooms:
                 self.text_widget.insert(tk.END, "Join a room first using /join [room_name]\n")
                 return
             formatted_message = f"{self.username}: {message}"
-            self.text_widget.insert(tk.END, formatted_message + "\n")  # Show the sent message locally
+            self.text_widget.insert(tk.END, formatted_message + "\n")
             self.client_socket.send(self.encrypt_message(formatted_message))
         self.input_entry.delete(0, tk.END)
 

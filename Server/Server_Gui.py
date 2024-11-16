@@ -120,7 +120,7 @@ class ServerGUI:
                 self.clients[client_socket] = {
                     "address": client_address,
                     "symmetric_key": symmetric_key,
-                    "room": None  # Initially not in any room
+                    "rooms": []  # Initialize an empty list of rooms
                 }
 
                 self.root.after(0, self.update_text_widget, f"Accepted connection from {client_ip}:{client_port}\n")
@@ -136,67 +136,58 @@ class ServerGUI:
 
     def handle_client(self, client_socket):
         client_data = self.clients[client_socket]
-        client_address = client_data["address"]
         symmetric_key = client_data["symmetric_key"]
-        client_ip, client_port = client_address
 
         try:
             while True:
                 encrypted_data = client_socket.recv(1024)
-
                 if not encrypted_data:
-                    self.update_text_widget(f"Client {client_ip}:{client_port} disconnected.\n")
-                    print(f"Client {client_ip}:{client_port} disconnected.\n")
-                    self.leave_room(client_socket)  # Remove client from room if connected
-                    del self.clients[client_socket]
-                    self.update_client_list()
-                    client_socket.close()
+                    self.disconnect_client(client_socket)
                     break
 
-                try:
-                    decoded_data = base64.b64decode(encrypted_data)
-                    decrypted_data = AESGCMCipher.decrypt(symmetric_key, decoded_data)
+                decoded_data = base64.b64decode(encrypted_data)
+                decrypted_data = AESGCMCipher.decrypt(symmetric_key, decoded_data)
 
-                    if decrypted_data.startswith("/join "):
-                        self.join_room(client_socket, decrypted_data[6:].strip())
-                    elif decrypted_data.startswith("/leave"):
-                        self.leave_room(client_socket)
-                    else:
-                        self.broadcast(decrypted_data, client_socket)
-                except Exception as e:
-                    self.update_text_widget(f"Error decrypting message from {client_ip}:{client_port}: {str(e)}\n")
+                if decrypted_data.startswith("/join "):
+                    self.join_room(client_socket, decrypted_data.split(" ", 1)[1].strip())
+                elif decrypted_data.startswith("/leave "):
+                    self.leave_room(client_socket, decrypted_data.split(" ", 1)[1].strip())
+                else:
+                    self.broadcast(decrypted_data, client_socket)
         except Exception as e:
-            self.update_text_widget(f"An error occurred with client {client_ip}:{client_port}: {str(e)}\n")
+            self.update_text_widget(f"Error with client {client_socket}: {e}\n")
         finally:
-            if client_socket in self.clients:
-                self.leave_room(client_socket)
-                del self.clients[client_socket]
-            client_socket.close()
+            self.disconnect_client(client_socket)
+
+    def disconnect_client(self, client_socket):
+        for room_name in list(self.clients[client_socket]["rooms"]):
+            self.leave_room(client_socket, room_name)
+        del self.clients[client_socket]
+        client_socket.close()
 
     def join_room(self, client_socket, room_name):
         if room_name not in self.rooms:
             self.rooms[room_name] = []
             self.update_text_widget(f"Room {room_name} created.\n")
 
-        current_room = self.clients[client_socket]["room"]
-        if current_room:
-            self.rooms[current_room].remove(client_socket)
+        if room_name not in self.clients[client_socket]["rooms"]:
+            self.rooms[room_name].append(client_socket)
+            self.clients[client_socket]["rooms"].append(room_name)
+            self.update_text_widget(f"Client joined room: {room_name}\n")
 
-        self.rooms[room_name].append(client_socket)
-        self.clients[client_socket]["room"] = room_name
-        self.update_text_widget(f"Client joined room: {room_name}\n")
+    def leave_room(self, client_socket, room_name):
+        if room_name in self.rooms and client_socket in self.rooms[room_name]:
+            self.rooms[room_name].remove(client_socket)
+            self.clients[client_socket]["rooms"].remove(room_name)
+            self.update_text_widget(f"Client left room: {room_name}\n")
 
-    def leave_room(self, client_socket):
-        current_room = self.clients[client_socket]["room"]
-        if current_room and client_socket in self.rooms[current_room]:
-            self.rooms[current_room].remove(client_socket)
-            self.update_text_widget(f"Client left room: {current_room}\n")
-        self.clients[client_socket]["room"] = None
+            if not self.rooms[room_name]:  # Clean up empty rooms
+                del self.rooms[room_name]
 
     def broadcast(self, message, sender_socket):
-        sender_room = self.clients[sender_socket]["room"]
-        if sender_room:
-            for client_socket in self.rooms[sender_room]:
+        sender_rooms = self.clients[sender_socket]["rooms"]
+        for room_name in sender_rooms:
+            for client_socket in self.rooms[room_name]:
                 if client_socket != sender_socket:
                     symmetric_key = self.clients[client_socket]["symmetric_key"]
                     encrypted_message = AESGCMCipher.encrypt(symmetric_key, message)
