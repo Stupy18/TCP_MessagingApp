@@ -2,9 +2,11 @@ import tkinter as tk
 from tkinter import ttk
 import socket
 import threading
-import pygame
-
-pygame.init()
+import base64
+from cryptography.hazmat.primitives import serialization
+from TLS.KeyExchange import KeyExchange
+from TLS.KeyDerivation import KeyDerivation
+from TLS.AES_GCM_CYPHER import AESGCMCipher
 
 
 class ClientGUI:
@@ -12,11 +14,8 @@ class ClientGUI:
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.username = None
         self.connected = False
-        self.index = 0
-        self.chat_history = []
-        self.edited_chat_history = []
-        self.client_messages = {}
-        self.current_room = None
+        self.symmetric_key = None
+        self.current_room = None  # Tracks the current room the user is in
 
         self.root = tk.Tk()
         self.root.title("Chat Client")
@@ -24,7 +23,6 @@ class ClientGUI:
         self.style = ttk.Style()
         self.style.theme_use("clam")
 
-        # Create a custom style for the main frame with a sandy background color
         self.style.configure("Sandy.TFrame", background="sandy brown")
 
         self.main_frame = ttk.Frame(self.root, padding=10, style="Sandy.TFrame")
@@ -60,24 +58,28 @@ class ClientGUI:
         self.input_entry = ttk.Entry(self.main_frame, state=tk.DISABLED)
         self.input_entry.grid(column=0, row=5, columnspan=2, sticky=(tk.W, tk.E))
 
-        self.send_button = ttk.Button(self.main_frame, text="Send", command=self.send_message,
-                                      state=tk.DISABLED)
+        self.send_button = ttk.Button(self.main_frame, text="Send", command=self.send_message, state=tk.DISABLED)
         self.send_button.grid(column=1, row=6, sticky=tk.E)
 
-    def on_enter(self, e, btn):
-        btn['background'] = '#2980b9'
+    def perform_key_exchange(self):
+        self.private_key, self.public_key = KeyExchange.generate_key_pair()
 
-    def on_leave(self, e, btn):
-        btn['background'] = '#3498db'
+        # Send public key to server in raw format
+        public_key_bytes = self.public_key.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw
+        )
+        self.client_socket.send(public_key_bytes)
 
-    def get_username(self):
-        return self.username
+        # Receive server's public key
+        server_public_key_bytes = self.client_socket.recv(32)
+        server_public_key = KeyExchange.deserialize_public_key(server_public_key_bytes)
 
-    def get_server_ip(self):
-        return self.ip_entry.get()
-
-    def get_server_port(self):
-        return self.port_entry.get()
+        # Generate shared secret and derive symmetric key
+        shared_secret = KeyExchange.generate_shared_secret(self.private_key, server_public_key)
+        print(f"Client shared secret: {shared_secret.hex()}")
+        self.symmetric_key = KeyDerivation.derive_symmetric_key(shared_secret)
+        print(f"Client symmetric key: {self.symmetric_key.hex()}")
 
     def connect(self):
         if not self.connected:
@@ -85,6 +87,9 @@ class ClientGUI:
                 server_ip = self.get_server_ip()
                 server_port = int(self.get_server_port())
                 self.client_socket.connect((server_ip, server_port))
+
+                self.perform_key_exchange()
+
                 self.text_widget.insert(tk.END, f"Connected to {server_ip}:{server_port}\n")
                 self.username = self.username_entry.get()
                 self.username_entry.config(state=tk.DISABLED)
@@ -93,72 +98,66 @@ class ClientGUI:
                 self.send_button.config(state=tk.NORMAL)
                 self.connected = True
                 self.start_receiving()
-                self.client_socket.send(
-                    "/join Private (To join/leave a room write /join/leave [room_name]".encode('utf-8'))
+
             except Exception as e:
                 self.text_widget.insert(tk.END, f"Connection error: {str(e)}\n")
 
     def send_message(self):
         message = self.input_entry.get()
-        self.index += 1
-        if message.lower() == "/exit":
-            self.client_socket.send("/exit".encode('utf-8'))
-            self.root.quit()
-        elif message.startswith("/edit"):
-            self.client_socket.send(message.encode('utf-8'))
-        elif message.startswith("/join"):
-            self.message_join(message)
+        if message.startswith("/join "):
+            self.current_room = message.split(" ", 1)[1]  # Update the current room
+            self.text_widget.insert(tk.END, f"Joined room: {self.current_room}\n")  # Show message locally
+            self.client_socket.send(self.encrypt_message(message))
         elif message.startswith("/leave"):
-            self.message_leave(message)
-        elif message.startswith("/clear"):
-            self.clear_screen()
-            self.chat_history = []
-        else:
-            self.message_send(message)
+            self.client_socket.send(self.encrypt_message(message))
+            self.text_widget.insert(tk.END, "Left the room\n")  # Show message locally
+            self.current_room = None
+        elif message:
+            if not self.current_room:
+                self.text_widget.insert(tk.END, "Join a room first using /join [room_name]\n")
+                return
+            formatted_message = f"{self.username}: {message}"
+            self.text_widget.insert(tk.END, formatted_message + "\n")  # Show the sent message locally
+            self.client_socket.send(self.encrypt_message(formatted_message))
         self.input_entry.delete(0, tk.END)
 
-    def message_send(self, message):
-        formatted_message = f"{self.username}: {message}"
-        self.client_socket.send(formatted_message.encode('utf-8'))
-        self.chat_history.append(formatted_message)
-        self.text_widget.insert(tk.END, formatted_message + "\n")
-
-    def message_leave(self, message):
-        sound = pygame.mixer.Sound("E:\python\Licenta_MessagingApp\door_close.mp3")
-        sound.play()
-        self.client_socket.send(message.encode('utf-8'))
-
-    def message_join(self, message):
-        self.current_room = message.split()[1]
-        self.client_socket.send(message.encode('utf-8'))
-
-    def start_receiving(self):
-        receive_thread = threading.Thread(target=self.receive_messages)
-        receive_thread.start()
+    def encrypt_message(self, message):
+        encrypted_message = AESGCMCipher.encrypt(self.symmetric_key, message)
+        print(f"Client encrypted message (base64): {base64.b64encode(encrypted_message).decode()}")
+        return base64.b64encode(encrypted_message)
 
     def receive_messages(self):
         try:
             while True:
-                data = self.client_socket.recv(1024).decode('utf-8')
-                if not data:
+                encrypted_data = self.client_socket.recv(1024)
+                if not encrypted_data:
                     self.text_widget.insert(tk.END, "Server closed the connection.\n")
                     break
-                self.text_widget.insert(tk.END, data + "\n")
+
+                try:
+                    decoded_data = base64.b64decode(encrypted_data)
+                    decrypted_message = AESGCMCipher.decrypt(self.symmetric_key, decoded_data)
+                    self.text_widget.insert(tk.END, decrypted_message + "\n")
+                except Exception as e:
+                    self.text_widget.insert(tk.END, f"Decryption error: {str(e)}\n")
+
         except Exception as e:
-            self.text_widget.insert(tk.END, f"An error occurred: {str(e)}\n")
+            self.text_widget.insert(tk.END, f"Error occurred: {str(e)}\n")
         finally:
             self.client_socket.close()
 
+    def start_receiving(self):
+        thread = threading.Thread(target=self.receive_messages, daemon=True)
+        thread.start()
+
+    def get_server_ip(self):
+        return self.ip_entry.get()
+
+    def get_server_port(self):
+        return self.port_entry.get()
+
     def run(self):
         self.root.mainloop()
-
-    def clear_screen(self):
-        self.text_widget.delete(1.0, tk.END)
-
-    def restore_chat_history(self):
-        for message in self.chat_history:
-            if not message.startswith("/delete "):
-                self.text_widget.insert(tk.END, 'User: ' + message + "\n")
 
 
 if __name__ == "__main__":

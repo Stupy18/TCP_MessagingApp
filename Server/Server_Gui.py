@@ -2,32 +2,35 @@ import tkinter as tk
 import socket
 import threading
 from tkinter import ttk, scrolledtext
+import base64
+from cryptography.hazmat.primitives import serialization
+from TLS.AES_GCM_CYPHER import AESGCMCipher
+from TLS.KeyDerivation import KeyDerivation
+from TLS.KeyExchange import KeyExchange
+
 
 class ServerGUI:
     def __init__(self):
         self.host = None
         self.port = 8080
         self.server_socket = None
-        self.clients = {}
-        self.rooms = {}
+        self.clients = {}  # Stores client-specific data {socket: {"address": address, "symmetric_key": key, "room": room}}
+        self.rooms = {}  # Stores rooms with their associated clients {room_name: [client_sockets]}
         self.chat_history = []
 
         self.root = tk.Tk()
         self.root.title("Chat Server")
         self.root.geometry("600x400")
 
-        # Styles
         self.style = ttk.Style()
         self.style.theme_use("clam")
         self.style.configure("TFrame", background="#333")
         self.style.configure("TLabel", background="#333", foreground="white")
         self.style.configure("TButton", background="#333", foreground="white")
 
-        # Main frame
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(expand=True, fill=tk.BOTH)
 
-        # Server Configuration Frame
         server_frame = ttk.Frame(main_frame)
         server_frame.pack(fill=tk.X)
 
@@ -43,16 +46,43 @@ class ServerGUI:
         self.stop_button = ttk.Button(server_frame, text="Stop Server", command=self.stop, state=tk.DISABLED)
         self.stop_button.pack(side=tk.LEFT, padx=5)
 
-        # Text Widget with Scrollbar
         self.text_widget = scrolledtext.ScrolledText(main_frame, wrap=tk.WORD, state=tk.DISABLED)
         self.text_widget.pack(expand=True, fill=tk.BOTH, pady=5)
 
-        # Clients List
         self.client_list_label = ttk.Label(main_frame, text="Connected Clients:")
         self.client_list_label.pack()
 
         self.client_list = tk.Listbox(main_frame)
         self.client_list.pack(expand=True, fill=tk.BOTH)
+
+    def perform_key_exchange(self, client_socket):
+        try:
+            private_key, public_key = KeyExchange.generate_key_pair()
+            client_public_key_bytes = client_socket.recv(32)
+            client_public_key = KeyExchange.deserialize_public_key(client_public_key_bytes)
+
+            # Send server's public key
+            client_socket.send(
+                public_key.public_bytes(
+                    encoding=serialization.Encoding.Raw,
+                    format=serialization.PublicFormat.Raw
+                )
+            )
+
+            shared_secret = KeyExchange.generate_shared_secret(private_key, client_public_key)
+            print(f"Server shared secret: {shared_secret.hex()}")
+
+            symmetric_key = KeyDerivation.derive_symmetric_key(shared_secret)
+            print("Server key derivation parameters:")
+            print(f"Salt: None")
+            print(f"Info: handshake data")
+            print(f"Shared secret: {shared_secret.hex()}")
+            print(f"Server symmetric key: {symmetric_key.hex()}")
+
+            return symmetric_key
+        except Exception as e:
+            print(f"Key exchange failed: {str(e)}")
+            raise
 
     def start(self):
         self.host = self.host_entry.get()
@@ -61,13 +91,12 @@ class ServerGUI:
         try:
             self.server_socket.bind((self.host, self.port))
             self.server_socket.listen(5)
-            self.text_widget.insert(tk.END, f"Server listening on {self.host}:{self.port}\n")
+            self.update_text_widget(f"Server listening on {self.host}:{self.port}\n")
             print(f"Server listening on {self.host}:{self.port}\n")
 
-            # Start server listening loop in a separate thread
             threading.Thread(target=self.run_server, daemon=True).start()
         except Exception as e:
-            self.text_widget.insert(tk.END, f"Server failed to start: {str(e)}\n")
+            self.update_text_widget(f"Server failed to start: {str(e)}\n")
 
         self.start_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
@@ -86,14 +115,92 @@ class ServerGUI:
             client_socket, client_address = self.server_socket.accept()
             client_ip, client_port = client_address
 
-            self.root.after(0, self.update_text_widget, f"Accepted connection from {client_ip}:{client_port}\n")
-            print(f"Accepted connection from {client_ip}:{client_port}\n")
-            self.clients[client_socket] = client_address
+            try:
+                symmetric_key = self.perform_key_exchange(client_socket)
+                self.clients[client_socket] = {
+                    "address": client_address,
+                    "symmetric_key": symmetric_key,
+                    "room": None  # Initially not in any room
+                }
 
-            self.root.after(0, self.update_client_list)
+                self.root.after(0, self.update_text_widget, f"Accepted connection from {client_ip}:{client_port}\n")
+                print(f"Accepted connection from {client_ip}:{client_port}\n")
 
-            client_thread = threading.Thread(target=self.handle_client, args=(client_socket, client_ip, client_port))
-            client_thread.start()
+                self.root.after(0, self.update_client_list)
+
+                client_thread = threading.Thread(target=self.handle_client, args=(client_socket,))
+                client_thread.start()
+            except Exception as e:
+                print(f"Error handling client {client_ip}:{client_port}: {str(e)}")
+                client_socket.close()
+
+    def handle_client(self, client_socket):
+        client_data = self.clients[client_socket]
+        client_address = client_data["address"]
+        symmetric_key = client_data["symmetric_key"]
+        client_ip, client_port = client_address
+
+        try:
+            while True:
+                encrypted_data = client_socket.recv(1024)
+
+                if not encrypted_data:
+                    self.update_text_widget(f"Client {client_ip}:{client_port} disconnected.\n")
+                    print(f"Client {client_ip}:{client_port} disconnected.\n")
+                    self.leave_room(client_socket)  # Remove client from room if connected
+                    del self.clients[client_socket]
+                    self.update_client_list()
+                    client_socket.close()
+                    break
+
+                try:
+                    decoded_data = base64.b64decode(encrypted_data)
+                    decrypted_data = AESGCMCipher.decrypt(symmetric_key, decoded_data)
+
+                    if decrypted_data.startswith("/join "):
+                        self.join_room(client_socket, decrypted_data[6:].strip())
+                    elif decrypted_data.startswith("/leave"):
+                        self.leave_room(client_socket)
+                    else:
+                        self.broadcast(decrypted_data, client_socket)
+                except Exception as e:
+                    self.update_text_widget(f"Error decrypting message from {client_ip}:{client_port}: {str(e)}\n")
+        except Exception as e:
+            self.update_text_widget(f"An error occurred with client {client_ip}:{client_port}: {str(e)}\n")
+        finally:
+            if client_socket in self.clients:
+                self.leave_room(client_socket)
+                del self.clients[client_socket]
+            client_socket.close()
+
+    def join_room(self, client_socket, room_name):
+        if room_name not in self.rooms:
+            self.rooms[room_name] = []
+            self.update_text_widget(f"Room {room_name} created.\n")
+
+        current_room = self.clients[client_socket]["room"]
+        if current_room:
+            self.rooms[current_room].remove(client_socket)
+
+        self.rooms[room_name].append(client_socket)
+        self.clients[client_socket]["room"] = room_name
+        self.update_text_widget(f"Client joined room: {room_name}\n")
+
+    def leave_room(self, client_socket):
+        current_room = self.clients[client_socket]["room"]
+        if current_room and client_socket in self.rooms[current_room]:
+            self.rooms[current_room].remove(client_socket)
+            self.update_text_widget(f"Client left room: {current_room}\n")
+        self.clients[client_socket]["room"] = None
+
+    def broadcast(self, message, sender_socket):
+        sender_room = self.clients[sender_socket]["room"]
+        if sender_room:
+            for client_socket in self.rooms[sender_room]:
+                if client_socket != sender_socket:
+                    symmetric_key = self.clients[client_socket]["symmetric_key"]
+                    encrypted_message = AESGCMCipher.encrypt(symmetric_key, message)
+                    client_socket.send(base64.b64encode(encrypted_message))
 
     def update_text_widget(self, message):
         self.text_widget.config(state=tk.NORMAL)
@@ -101,111 +208,15 @@ class ServerGUI:
         self.text_widget.config(state=tk.DISABLED)
         self.text_widget.yview(tk.END)
 
-    def handle_client(self, client_socket, client_ip, client_port):
-        try:
-            while True:
-                data = client_socket.recv(1024).decode('utf-8')
-
-                if not data:
-                    self.text_widget.insert(tk.END, f"Client {client_ip}:{client_port} disconnected.\n")
-                    print(f"Client {client_ip}:{client_port} disconnected.\n")
-                    del self.clients[client_socket]
-                    self.update_client_list()
-                    client_socket.close()
-                    break
-                elif data.startswith('/edit '):
-                    self.edit_message(client_socket, data)
-                elif data.startswith('/delete '):
-                    self.delete_message(client_socket, data)
-                elif data.startswith('/join '):
-                    self.join_room(client_socket, data)
-                elif data.startswith('/leave '):
-                    self.leave_room(client_socket, data)
-                else:
-                    self.chat_history.append(data)
-                    self.broadcast(data, client_socket)
-        except Exception as e:
-            self.text_widget.insert(tk.END, f"An error occurred with client {client_ip}:{client_port}: {str(e)}\n")
-
     def update_client_list(self):
         self.client_list.delete(0, tk.END)
-        for client_socket, client_address in self.clients.items():
-            client_ip, client_port = client_address
+        for client_socket, client_data in self.clients.items():
+            client_ip, client_port = client_data["address"]
             self.client_list.insert(tk.END, f"{client_ip}:{client_port}")
-
-    def broadcast(self, message, sender_socket):
-        sender_room = None
-        for room, clients in self.rooms.items():
-            if sender_socket in clients:
-                sender_room = room
-                break
-
-        for room, clients in self.rooms.items():
-            if room == sender_room:
-                continue
-
-            for client_socket in clients:
-                if client_socket != sender_socket:
-                    if sender_socket in self.rooms[room]:
-                        try:
-                            client_socket.send(message.encode('utf-8'))
-                        except Exception as e:
-                            client_address = self.clients[client_socket]
-                            client_ip, client_port = client_address
-                            self.text_widget.insert(tk.END,
-                                                    f"Failed to send message to {client_ip}:{client_port}: {str(e)}\n")
-
-    def edit_message(self, sender_socket, data):
-        parts = data.split(' ', 2)
-        if len(parts) == 3:
-            try:
-                message_index = int(parts[1])
-                new_content = parts[2]
-                if 0 <= message_index < len(self.chat_history):
-                    self.chat_history[message_index] = new_content
-                    self.broadcast(f'Message edited: {new_content}', sender_socket)
-            except (ValueError, IndexError):
-                pass
-
-    def delete_message(self, sender_socket, data):
-        parts = data.split(' ', 1)
-        if len(parts) == 2:
-            try:
-                message_index = int(parts[1])
-                if 0 <= message_index < len(self.chat_history):
-                    deleted_message = self.chat_history.pop(message_index)
-                    self.broadcast(f'Message deleted: {deleted_message}', sender_socket)
-            except (ValueError, IndexError):
-                pass
-
-    def join_room(self, client_socket, data):
-        parts = data.split(' ', 1)
-        if len(parts) == 2:
-            room_name = parts[1].strip()
-
-            if room_name not in self.rooms:
-                self.rooms[room_name] = []
-                self.update_text_widget(f'Room {room_name} created\n')
-
-            self.rooms[room_name].append(client_socket)
-            client_socket.send(f'Joined room: {room_name}'.encode('utf-8'))
-
-    def leave_room(self, client_socket, data):
-        parts = data.split(' ', 1)
-        if len(parts) == 2:
-            room_name = parts[1].strip()
-
-            if room_name in self.rooms:
-                if client_socket in self.rooms[room_name]:
-                    self.rooms[room_name].remove(client_socket)
-                    client_socket.send(f'Left room: {room_name}'.encode('utf-8'))
-                else:
-                    client_socket.send(f'You are not in room: {room_name}'.encode('utf-8'))
-            else:
-                client_socket.send(f'Room {room_name} does not exist.'.encode('utf-8'))
 
     def run(self):
         self.root.mainloop()
+
 
 if __name__ == "__main__":
     server_gui = ServerGUI()

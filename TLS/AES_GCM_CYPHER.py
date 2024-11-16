@@ -9,7 +9,7 @@ class AESGCMCipher:
     @staticmethod
     def encrypt(key, plaintext):
         """Encrypts a message using AES-GCM."""
-        iv = os.urandom(12)  # 12-byte Initialization Vector
+        iv = os.urandom(12)
         cipher = Cipher(algorithms.AES(key), modes.GCM(iv), backend=default_backend())
         encryptor = cipher.encryptor()
         ciphertext = encryptor.update(plaintext.encode()) + encryptor.finalize()
@@ -18,11 +18,9 @@ class AESGCMCipher:
     @staticmethod
     def decrypt(key, encrypted_message):
         """Decrypts a message using AES-GCM."""
-        iv = encrypted_message[:12]  # Extract IV (first 12 bytes)
-        tag = encrypted_message[12:28]  # Extract Tag (next 16 bytes)
-        ciphertext = encrypted_message[28:]  # Extract Ciphertext (rest)
-
+        iv = encrypted_message[:12]
+        tag = encrypted_message[12:28]
+        ciphertext = encrypted_message[28:]
         cipher = Cipher(algorithms.AES(key), modes.GCM(iv, tag), backend=default_backend())
         decryptor = cipher.decryptor()
-        decrypted_message = decryptor.update(ciphertext) + decryptor.finalize()
-        return decrypted_message.decode()
+        return (decryptor.update(ciphertext) + decryptor.finalize()).decode()
