@@ -1,9 +1,7 @@
 import tkinter as tk
 import socket
 import threading
-from cryptography.fernet import Fernet
 from tkinter import ttk, scrolledtext
-
 
 class ServerGUI:
     def __init__(self):
@@ -13,11 +11,10 @@ class ServerGUI:
         self.clients = {}
         self.rooms = {}
         self.chat_history = []
-        self.keys = {}
 
         self.root = tk.Tk()
         self.root.title("Chat Server")
-        self.root.geometry("600x400")  # Set initial size of the window
+        self.root.geometry("600x400")
 
         # Styles
         self.style = ttk.Style()
@@ -76,26 +73,23 @@ class ServerGUI:
         self.stop_button.config(state=tk.NORMAL)
 
     def stop(self):
-        # Implement the logic to stop the server here
         if self.server_socket:
             self.server_socket.close()
             self.server_socket = None
 
-        # Update the GUI
         self.start_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
         self.update_text_widget("Server stopped.\n")
+
     def run_server(self):
         while True:
             client_socket, client_address = self.server_socket.accept()
             client_ip, client_port = client_address
 
-            # Use after to safely update the GUI from another thread
             self.root.after(0, self.update_text_widget, f"Accepted connection from {client_ip}:{client_port}\n")
             print(f"Accepted connection from {client_ip}:{client_port}\n")
             self.clients[client_socket] = client_address
 
-            # Update client list in a thread-safe way
             self.root.after(0, self.update_client_list)
 
             client_thread = threading.Thread(target=self.handle_client, args=(client_socket, client_ip, client_port))
@@ -106,11 +100,6 @@ class ServerGUI:
         self.text_widget.insert(tk.END, message)
         self.text_widget.config(state=tk.DISABLED)
         self.text_widget.yview(tk.END)
-
-    def generate_symmetric_key(self):
-        key = Fernet.generate_key()
-        self.update_text_widget(f"Generated Key: {key}\n")  # Update to insert in text widget
-        return key
 
     def handle_client(self, client_socket, client_ip, client_port):
         try:
@@ -146,8 +135,6 @@ class ServerGUI:
 
     def broadcast(self, message, sender_socket):
         sender_room = None
-        print("MESAJUL CRIPTAT=",message)
-        # Find the room of the sender
         for room, clients in self.rooms.items():
             if sender_socket in clients:
                 sender_room = room
@@ -155,12 +142,10 @@ class ServerGUI:
 
         for room, clients in self.rooms.items():
             if room == sender_room:
-                continue  # Skip broadcasting to the sender's room
+                continue
 
             for client_socket in clients:
-                if client_socket != sender_socket:  # Skip sending the message back to the sender
-
-                    # Check if the sender is still in the room before broadcasting
+                if client_socket != sender_socket:
                     if sender_socket in self.rooms[room]:
                         try:
                             client_socket.send(message.encode('utf-8'))
@@ -173,7 +158,6 @@ class ServerGUI:
     def edit_message(self, sender_socket, data):
         parts = data.split(' ', 2)
         if len(parts) == 3:
-
             try:
                 message_index = int(parts[1])
                 new_content = parts[2]
@@ -201,15 +185,10 @@ class ServerGUI:
 
             if room_name not in self.rooms:
                 self.rooms[room_name] = []
-                self.keys[room_name] = self.generate_symmetric_key()
-                self.update_text_widget(f'Room {room_name} created\n')  # Update to insert in text widget
+                self.update_text_widget(f'Room {room_name} created\n')
 
             self.rooms[room_name].append(client_socket)
-
             client_socket.send(f'Joined room: {room_name}'.encode('utf-8'))
-            # Send the symmetric key to the client
-            key_message = f'KEY_MSG:{room_name}:{self.keys[room_name]}'
-            client_socket.send(key_message.encode('utf-8'))
 
     def leave_room(self, client_socket, data):
         parts = data.split(' ', 1)
@@ -227,7 +206,6 @@ class ServerGUI:
 
     def run(self):
         self.root.mainloop()
-
 
 if __name__ == "__main__":
     server_gui = ServerGUI()
