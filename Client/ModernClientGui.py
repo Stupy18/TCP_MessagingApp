@@ -34,41 +34,55 @@ class ClientGUI:
 
         # Window Setup
         self.root = tk.Tk()
-        self.root.title("Secure Chat Client")
-        self.root.geometry("1000x700")
-        self.root.minsize(800, 600)
+        self.root.title("Secure Chat")
+        self.root.geometry("1200x800")
+        self.root.minsize(1000, 700)
+        self.root.configure(bg='#1A1B26')
 
-        # Configure modern color scheme and styling
+        # Load custom fonts
+        self.load_custom_fonts()
+
+        # Configure modern styling
         self.setup_styles()
 
-        # Create main container with padding
-        self.container = ttk.Frame(self.root, padding="20")
+        # Create main container
+        self.container = ttk.Frame(self.root, style='Main.TFrame', padding="15")
         self.container.pack(expand=True, fill=tk.BOTH)
 
-        # Create three main sections
+        # Create sections
         self.create_header_section()
         self.create_main_section()
         self.create_status_bar()
 
-        # Set up key bindings
+        # Set up bindings
         self.setup_bindings()
 
+    def load_custom_fonts(self):
+        # Note: These are system fonts that are commonly available
+        self.header_font = ('Segoe UI', 13, 'bold')
+        self.normal_font = ('Segoe UI', 11)
+        self.message_font = ('Segoe UI', 11)
+        self.status_font = ('Segoe UI', 10)
+
     def setup_styles(self):
-        # Define color palette
+        # Modern color palette inspired by Tokyo Night theme
         colors = {
-            'bg': '#1E1E2E',
-            'fg': '#CDD6F4',
-            'accent': '#89B4FA',
-            'secondary': '#313244',
-            'hover': '#45475A',
-            'error': '#F38BA8',
-            'success': '#A6E3A1'
+            'bg': '#1A1B26',
+            'fg': '#A9B1D6',
+            'accent': '#7AA2F7',
+            'accent_hover': '#89B4FA',
+            'secondary': '#24283B',
+            'tertiary': '#414868',
+            'success': '#9ECE6A',
+            'error': '#F7768E',
+            'input_bg': '#1F2335',
+            'selection': '#34406B'
         }
 
         style = ttk.Style()
         style.theme_use('clam')
 
-        # Configure main styles
+        # Frame styles
         style.configure('Main.TFrame', background=colors['bg'])
         style.configure('Header.TFrame', background=colors['secondary'])
         style.configure('Content.TFrame', background=colors['bg'])
@@ -77,168 +91,214 @@ class ClientGUI:
         style.configure('TLabel',
                         background=colors['bg'],
                         foreground=colors['fg'],
-                        font=('Segoe UI', 10)
-                        )
+                        font=self.normal_font)
+
         style.configure('Header.TLabel',
                         background=colors['secondary'],
                         foreground=colors['fg'],
-                        font=('Segoe UI', 12, 'bold')
-                        )
+                        font=self.header_font)
+
         style.configure('Status.TLabel',
-                        background=colors['secondary'],
+                        background=colors['tertiary'],
                         foreground=colors['fg'],
-                        font=('Segoe UI', 9)
-                        )
+                        font=self.status_font)
 
         # Button styles
         style.configure('TButton',
-                        background=colors['secondary'],
-                        foreground=colors['fg'],
-                        padding=(10, 5),
-                        font=('Segoe UI', 10)
-                        )
-        style.configure('Accent.TButton',
                         background=colors['accent'],
-                        foreground=colors['bg']
-                        )
+                        foreground=colors['fg'],
+                        padding=(15, 8),
+                        font=self.normal_font)
+
+        style.configure('Accent.TButton',
+                        background=colors['accent_hover'],
+                        foreground=colors['fg'])
+
+        style.map('TButton',
+                  background=[('active', colors['accent_hover'])],
+                  foreground=[('active', colors['fg'])])
 
         # Entry styles
         style.configure('TEntry',
-                        fieldbackground=colors['secondary'],
+                        fieldbackground=colors['input_bg'],
                         foreground=colors['fg'],
-                        padding=5
-                        )
+                        padding=10,
+                        font=self.normal_font)
 
-        # Listbox style
-        self.root.option_add('*TListbox*background', colors['secondary'])
-        self.root.option_add('*TListbox*foreground', colors['fg'])
-        self.root.option_add('*TListbox*font', ('Segoe UI', 10))
+        style.map('TEntry',
+                  fieldbackground=[('focus', colors['secondary'])])
+
+        # Scrollbar style
+        style.configure('TScrollbar',
+                        background=colors['tertiary'],
+                        troughcolor=colors['bg'],
+                        borderwidth=0,
+                        arrowcolor=colors['fg'])
+
+        # Text widget configuration dictionary
+        text_config = {
+            'bg': colors['input_bg'],
+            'fg': colors['fg'],
+            'selectbackground': colors['selection'],
+            'selectforeground': colors['fg'],
+            'font': self.message_font,
+            'relief': 'flat',
+            'padx': 10,
+            'pady': 10,
+            'borderwidth': 0
+        }
+
+        # Configure root window background
+        self.root.configure(bg=colors['bg'])
+
+        # Configure Text and Listbox through option database
+        self.root.option_add('*Text.font', self.message_font)
+        self.root.option_add('*Text.relief', 'flat')
+        self.root.option_add('*Text.background', colors['input_bg'])
+        self.root.option_add('*Text.foreground', colors['fg'])
+        self.root.option_add('*Text.selectBackground', colors['selection'])
+        self.root.option_add('*Text.selectForeground', colors['fg'])
+
+        self.root.option_add('*Listbox.font', self.normal_font)
+        self.root.option_add('*Listbox.background', colors['input_bg'])
+        self.root.option_add('*Listbox.foreground', colors['fg'])
+        self.root.option_add('*Listbox.selectBackground', colors['selection'])
+        self.root.option_add('*Listbox.selectForeground', colors['fg'])
+        self.root.option_add('*Listbox.relief', 'flat')
+
+        return text_config
 
     def create_header_section(self):
         header = ttk.Frame(self.container, style='Header.TFrame')
-        header.pack(fill=tk.X, pady=(0, 20))
+        header.pack(fill=tk.X, pady=(0, 15))
 
-        # Connection settings with grid layout
-        settings_frame = ttk.Frame(header, style='Header.TFrame')
-        settings_frame.pack(pady=10, padx=10)
+        # Add subtle border to header
+        separator = ttk.Separator(self.container, orient='horizontal')
+        separator.pack(fill=tk.X, pady=(0, 15))
 
-        # Server settings
+        # Connection settings
+        settings_frame = ttk.Frame(header, style='Header.TFrame', padding="10")
+        settings_frame.pack(expand=True, fill=tk.X)
+
+        # Left side - Server settings
         server_frame = ttk.Frame(settings_frame, style='Header.TFrame')
-        server_frame.pack(side=tk.LEFT, padx=10)
+        server_frame.pack(side=tk.LEFT, padx=20)
 
-        ttk.Label(server_frame, text="Server Settings", style='Header.TLabel').pack()
+        ttk.Label(server_frame, text="CONNECTION", style='Header.TLabel').pack(anchor=tk.W)
 
-        ip_frame = ttk.Frame(server_frame, style='Header.TFrame')
-        ip_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(ip_frame, text="IP:", style='Header.TLabel').pack(side=tk.LEFT)
+        # IP and Port in same row
+        conn_frame = ttk.Frame(server_frame, style='Header.TFrame')
+        conn_frame.pack(fill=tk.X, pady=(10, 0))
+
+        ip_frame = ttk.Frame(conn_frame, style='Header.TFrame')
+        ip_frame.pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(ip_frame, text="IP", style='Header.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         self.ip_entry = ttk.Entry(ip_frame, width=15)
-        self.ip_entry.pack(side=tk.LEFT, padx=5)
+        self.ip_entry.pack(side=tk.LEFT)
         self.ip_entry.insert(0, "127.0.0.1")
 
-        port_frame = ttk.Frame(server_frame, style='Header.TFrame')
-        port_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(port_frame, text="Port:", style='Header.TLabel').pack(side=tk.LEFT)
+        port_frame = ttk.Frame(conn_frame, style='Header.TFrame')
+        port_frame.pack(side=tk.LEFT)
+        ttk.Label(port_frame, text="PORT", style='Header.TLabel').pack(side=tk.LEFT, padx=(0, 8))
         self.port_entry = ttk.Entry(port_frame, width=7)
-        self.port_entry.pack(side=tk.LEFT, padx=5)
+        self.port_entry.pack(side=tk.LEFT)
         self.port_entry.insert(0, "8080")
 
-        # User settings
+        # Center - Username
         user_frame = ttk.Frame(settings_frame, style='Header.TFrame')
-        user_frame.pack(side=tk.LEFT, padx=10)
+        user_frame.pack(side=tk.LEFT, padx=20)
 
-        ttk.Label(user_frame, text="User Settings", style='Header.TLabel').pack()
+        ttk.Label(user_frame, text="USERNAME", style='Header.TLabel').pack(anchor=tk.W)
+        self.username_entry = ttk.Entry(user_frame, width=20)
+        self.username_entry.pack(pady=(10, 0))
 
-        username_frame = ttk.Frame(user_frame, style='Header.TFrame')
-        username_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(username_frame, text="Username:", style='Header.TLabel').pack(side=tk.LEFT)
-        self.username_entry = ttk.Entry(username_frame, width=15)
-        self.username_entry.pack(side=tk.LEFT, padx=5)
-
-        # Connect button
+        # Right side - Connect button
         button_frame = ttk.Frame(settings_frame, style='Header.TFrame')
-        button_frame.pack(side=tk.LEFT, padx=10, pady=(15, 0))
-        self.connect_button = ModernButton(button_frame, text="Connect", command=self.connect)
-        self.connect_button.pack()
+        button_frame.pack(side=tk.RIGHT, padx=20)
+
+        self.connect_button = ModernButton(
+            button_frame,
+            text="Connect",
+            command=self.connect,
+            style='Accent.TButton',
+            padding=(30, 12)
+        )
+        self.connect_button.pack(pady=(25, 0))
 
     def create_main_section(self):
         main_content = ttk.PanedWindow(self.container, orient=tk.HORIZONTAL)
         main_content.pack(expand=True, fill=tk.BOTH)
 
-        # Chat section (left side)
+        # Chat section (left)
         chat_frame = ttk.Frame(main_content, style='Content.TFrame')
-        main_content.add(chat_frame, weight=3)
+        main_content.add(chat_frame, weight=7)
 
-        # Chat log
+        # Chat container
         chat_container = ttk.Frame(chat_frame, style='Content.TFrame')
-        chat_container.pack(expand=True, fill=tk.BOTH, padx=10)
+        chat_container.pack(expand=True, fill=tk.BOTH, padx=15)
 
-        ttk.Label(chat_container, text="Chat Messages", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(chat_container, text="MESSAGES", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 10))
 
-        # Custom styled Text widget for chat log
+        # Chat log with custom styling
+        text_config = self.setup_styles()
         self.chat_log = tk.Text(
             chat_container,
             wrap=tk.WORD,
             state=tk.DISABLED,
-            font=('Segoe UI', 10),
-            bg='#313244',
-            fg='#CDD6F4',
-            insertbackground='#CDD6F4',
-            selectbackground='#89B4FA',
-            selectforeground='#1E1E2E',
-            relief=tk.FLAT,
-            pady=5,
-            padx=5
+            **text_config
         )
+        # Set insert cursor color after creation
+        self.chat_log.config(insertbackground=text_config['fg'])
         self.chat_log.pack(expand=True, fill=tk.BOTH)
 
-        # Add scrollbar to chat log
+        # Modern scrollbar
         chat_scrollbar = ttk.Scrollbar(chat_container, orient=tk.VERTICAL, command=self.chat_log.yview)
         chat_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.chat_log.configure(yscrollcommand=chat_scrollbar.set)
 
         # Message input area
-        input_frame = ttk.Frame(chat_frame, style='Content.TFrame')
-        input_frame.pack(fill=tk.X, pady=10, padx=10)
+        input_frame = ttk.Frame(chat_frame, style='Content.TFrame', padding="15")
+        input_frame.pack(fill=tk.X)
 
         self.message_entry = ttk.Entry(input_frame)
         self.message_entry.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 10))
         self.message_entry.config(state=tk.DISABLED)
 
-        self.send_button = ModernButton(input_frame, text="Send", command=self.send_message, state=tk.DISABLED)
+        self.send_button = ModernButton(
+            input_frame,
+            text="Send",
+            command=self.send_message,
+            state=tk.DISABLED,
+            padding=(20, 10)
+        )
         self.send_button.pack(side=tk.RIGHT)
 
-        # Room management section (right side)
+        # Room section (right)
         room_frame = ttk.Frame(main_content, style='Content.TFrame')
-        main_content.add(room_frame, weight=1)
+        main_content.add(room_frame, weight=3)
 
-        room_container = ttk.Frame(room_frame, style='Content.TFrame')
-        room_container.pack(expand=True, fill=tk.BOTH, padx=10)
+        room_container = ttk.Frame(room_frame, style='Content.TFrame', padding="15")
+        room_container.pack(expand=True, fill=tk.BOTH)
 
-        ttk.Label(room_container, text="Room Management", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(room_container, text="ROOMS", style='Header.TLabel').pack(anchor=tk.W, pady=(0, 10))
 
-        # Room list with custom styling
+        # Room list
         self.room_list = tk.Listbox(
             room_container,
             selectmode=tk.SINGLE,
-            font=('Segoe UI', 10),
-            bg='#313244',
-            fg='#CDD6F4',
-            selectbackground='#89B4FA',
-            selectforeground='#1E1E2E',
-            relief=tk.FLAT,
-            highlightthickness=0
+            **{k: v for k, v in self.setup_styles().items() if k != 'padx' and k != 'pady'}
         )
-        self.room_list.pack(expand=True, fill=tk.BOTH, pady=(0, 10))
+        self.room_list.pack(expand=True, fill=tk.BOTH, pady=(0, 15))
 
         # Room controls
         self.room_entry = ttk.Entry(room_container)
-        self.room_entry.pack(fill=tk.X, pady=(0, 5))
+        self.room_entry.pack(fill=tk.X, pady=(0, 10))
         self.room_entry.insert(0, "Enter room name...")
         self.room_entry.bind('<FocusIn>', lambda e: self.on_entry_click(e, "Enter room name..."))
         self.room_entry.bind('<FocusOut>', lambda e: self.on_focus_out(e, "Enter room name..."))
 
         button_frame = ttk.Frame(room_container, style='Content.TFrame')
-        button_frame.pack(fill=tk.X, pady=5)
+        button_frame.pack(fill=tk.X, pady=(0, 5))
 
         self.join_room_button = ModernButton(button_frame, text="Join Room", command=self.join_room)
         self.join_room_button.pack(fill=tk.X, pady=(0, 5))
@@ -247,14 +307,16 @@ class ClientGUI:
         self.leave_room_button.pack(fill=tk.X)
 
     def create_status_bar(self):
+        status_frame = ttk.Frame(self.container, style='Header.TFrame')
+        status_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=(15, 0))
+
         self.status_bar = ttk.Label(
-            self.container,
+            status_frame,
             text="Not connected",
             style='Status.TLabel',
-            padding=(10, 5)
+            padding=(10, 8)
         )
-        self.status_bar.pack(fill=tk.X, side=tk.BOTTOM)
-
+        self.status_bar.pack(fill=tk.X)
     def setup_bindings(self):
         # Bind Enter key to send message
         self.message_entry.bind('<Return>', lambda e: self.send_message())
