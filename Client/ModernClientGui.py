@@ -67,16 +67,16 @@ class ClientGUI:
     def setup_styles(self):
         # Modern color palette inspired by Tokyo Night theme
         colors = {
-            'bg': '#1A1B26',
-            'fg': '#A9B1D6',
-            'accent': '#7AA2F7',
-            'accent_hover': '#89B4FA',
-            'secondary': '#24283B',
-            'tertiary': '#414868',
-            'success': '#9ECE6A',
-            'error': '#F7768E',
-            'input_bg': '#1F2335',
-            'selection': '#34406B'
+            'bg': '#0F0E17',
+            'fg': '#FFFFFF',
+            'accent': '#FF8906',
+            'accent_hover': '#FFB85C',
+            'secondary': '#2E2F3E',
+            'tertiary': '#4A4B5E',
+            'success': '#6EC867',
+            'error': '#E63946',
+            'input_bg': '#23233A',
+            'selection': '#3E497A'
         }
 
         style = ttk.Style()
