@@ -1,43 +1,75 @@
 import sys
+import tkinter
 
 import customtkinter as ctk
 from tkinter import messagebox
 import threading
 
 from Client.ChatClient import ChatClient
+from Client.LoginPopup import LoginPopup
+from Client.RoomPopup import RoomPopup
+
 
 
 class ChatGUI:
     def __init__(self):
-        self.chat_client = ChatClient(message_callback=self.handle_incoming_message)
-        ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("blue")
-        self.setup_colors()
-        self.setup_gui()
+        self.root = ctk.CTk()
+        self.root.withdraw()  # Hide main window initially
+
+
+        # Create login popup
+        login = LoginPopup(self.root)
+        username = login.get_username()
+
+        if username:
+            self.chat_client = ChatClient(message_callback=self.handle_incoming_message)
+            ctk.set_appearance_mode("dark")
+            ctk.set_default_color_theme("blue")
+            self.setup_colors()
+            self.setup_gui()
+
+            # Pre-fill and connect
+            self.username_entry.insert(0, username)
+            self.root.after(100, self.auto_connect)  # Connect after GUI is shown
+            self.root.deiconify()  # Show main window
+        else:
+            self.root.destroy()  # Exit if no username provided
+
+    def auto_connect(self):
+        """Automatically connect with the pre-filled username"""
+        self.connect()
 
     def setup_colors(self):
         self.colors = {
-            'primary': '#FA4032',  # Red - main buttons and primary actions
-            'primary_hover': '#FA812F',  # Orange - hover states
-            'secondary': '#FAB12F',  # Gold/Yellow - secondary elements
-            'accent': '#FEF3E2',  # Light peach - accents
-            'success': '#4CAF50',  # Keep green for success states
-            'error': '#FA4032',  # Red for errors (same as primary)
-            'warning': '#FAB12F',  # Gold for warnings (same as secondary)
-            'surface': '#1E1B4B',  # Keep deep navy - background
-            'surface_dark': '#0F172A',  # Keep darker navy - secondary background
-            'text': '#FEF3E2',  # Light peach - main text
-            'text_secondary': '#FAB12F',  # Gold - secondary text
-            'input_background': '#1E1B4B',  # Dark background for inputs
-            'surface_raised': '#2D2D45',  # Slightly lighter navy for raised elements
-            'border': '#FAB12F',  # Gold borders
-            'border_light': '#FEF3E2'  # Light peach borders
+            'primary': '#1F4690',  # Deep blue - conveys trust and reliability, suitable for CTAs
+            'primary_hover': '#1E88E5',  # Medium blue - elegant and eye-catching hover state
+            'secondary': '#0077B6',  # Muted teal - secondary actions, professional and calming
+            'accent': '#5A189A',  # Rich purple - adds depth and a sense of premium quality for special elements
+            'success': '#2E7D32',  # Dark green - sophisticated green for success states
+            'error': '#B00020',  # Deep red - serious and clear error indication
+            'warning': '#FF8C00',  # Warm amber - attention-grabbing but not overly aggressive
+            'surface': '#1C1C1E',  # Charcoal black - main background, professional and minimal
+            'surface_dark': '#121212',  # Deep black - darker secondary background, suitable for contrast
+            'text': '#F5F5F7',  # Light gray - softer white for primary text, reduces eye strain
+            'text_secondary': '#C5C6C7',  # Medium gray - secondary text for subtle emphasis
+
+            # New additions for more depth
+            'surface_raised': '#2C2C2E',  # Slightly lighter than surface for elevated components
+            'border': '#3C3C3F',  # Dark gray - subtle borders for definition without high contrast
+            'border_light': '#55575A',  # Mid gray - highlighted borders, more visible but not stark
+            'input_background': '#262628',  # Dark gray - input field background, makes inputs stand out slightly
+            'badge_background': 'rgba(31, 70, 144, 0.1)',  # Transparent blue - subtle, professional badge background
+            'shadow': '0px 4px 8px rgba(0, 0, 0, 0.15)'  # Slightly deeper shadow for a more refined elevation
         }
+
     def setup_gui(self):
         self.root = ctk.CTk()
-        self.root.title("✨ Secure Chat")
+        self.root.title("Secure Chat")
         self.root.geometry("1200x800")
         self.root.minsize(1000, 700)
+        self.root.iconbitmap("../assets/icon.ico")
+
+
 
         if sys.platform.startswith('win'):
             self.root.wm_attributes('-transparentcolor', 'white')
@@ -48,7 +80,6 @@ class ChatGUI:
         self.root.wm_attributes('-topmost', False)  # Don't keep on top
 
         # Create custom title bar
-
 
         # Main container without border
         self.container = ctk.CTkFrame(
@@ -72,6 +103,7 @@ class ChatGUI:
     def minimize_window(self):
         self.root.wm_withdraw()
         self.root.wm_state('iconic')
+
     def create_title_bar(self):
         title_bar = ctk.CTkFrame(
             self.root,
@@ -82,12 +114,10 @@ class ChatGUI:
         title_bar.pack(fill='x', side='top')
         title_bar.pack_propagate(False)
 
-
-
         # Title
         title_label = ctk.CTkLabel(
             title_bar,
-            text="✨ Secure Chat",
+            text="Secure Chat",
             font=("Segoe UI", 12, "bold"),
             text_color=self.colors['text']
         )
@@ -147,7 +177,6 @@ class ChatGUI:
 
     def setup_bindings(self):
         self.message_entry.bind('<Return>', lambda e: self.send_message())
-        self.room_entry.bind('<Return>', lambda e: self.join_room())
 
     def create_header_section(self):
         header = ctk.CTkFrame(
@@ -305,7 +334,7 @@ class ChatGUI:
 
         self.send_button = ctk.CTkButton(
             input_frame,
-            text="Send 📨",
+            text="Send",
             font=("Segoe UI", 13, "bold"),
             width=100,
             height=45,
@@ -351,31 +380,24 @@ class ChatGUI:
         self.room_list.pack(expand=True, fill='both', padx=20, pady=(0, 15))
 
         # Room controls
-        room_control_frame = ctk.CTkFrame(rooms_frame, fg_color="transparent", height=110)
+        room_control_frame = ctk.CTkFrame(rooms_frame, fg_color="transparent",
+                                          height=60)  # Changed height from 110 to 60
         room_control_frame.pack(fill='x', padx=20, pady=(0, 20))
         room_control_frame.pack_propagate(False)
 
-        self.room_entry = ctk.CTkEntry(
-            room_control_frame,
-            placeholder_text="Enter room name",
-            font=("Segoe UI", 12),
-            height=45,
-            fg_color=self.colors['surface_dark'],
-            border_color=self.colors['primary'],
-            border_width=1
-        )
-        self.room_entry.pack(fill='x', pady=(0, 10))
-
         join_button = ctk.CTkButton(
             room_control_frame,
-            text="Join Room 🚀",
+            text="Join Room ",
             font=("Segoe UI", 13, "bold"),
             height=45,
-            command=self.join_room,
+            command=self.show_join_room_popup,
             fg_color=self.colors['secondary'],
             hover_color=self.colors['accent']
         )
         join_button.pack(fill='x')
+
+    def show_join_room_popup(self):
+        RoomPopup(self.root, self.colors, self.join_room)
 
     def create_status_bar(self):
         self.status_bar = ctk.CTkLabel(
@@ -425,8 +447,7 @@ class ChatGUI:
                 self.update_status(response, 'error')
                 self.append_to_chat(response)
 
-    def join_room(self):
-        room_name = self.room_entry.get().strip()
+    def join_room(self, room_name):
         if not room_name:
             self.update_status("Please enter a valid room name", 'error')
             return
@@ -442,7 +463,6 @@ class ChatGUI:
                 height=35
             )
             room_button.pack(fill='x', pady=5, padx=5)
-            self.room_entry.delete(0, 'end')
             self.append_to_chat(f"→ Joined room: {room_name}")
             self.update_status(f"Successfully joined room: {room_name}", 'success')
         else:
@@ -503,6 +523,7 @@ class ChatGUI:
         x = (self.root.winfo_screenwidth() // 2) - (width // 2)
         y = (self.root.winfo_screenheight() // 2) - (height // 2)
         self.root.geometry(f'+{x}+{y}')
+
 
 if __name__ == "__main__":
     try:
