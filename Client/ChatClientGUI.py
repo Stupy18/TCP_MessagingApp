@@ -16,7 +16,6 @@ class ChatGUI:
         self.root = ctk.CTk()
         self.root.withdraw()  # Hide main window initially
 
-
         # Create login popup
         login = LoginPopup(self.root)
         username = login.get_username()
@@ -28,13 +27,15 @@ class ChatGUI:
             self.setup_colors()
             self.setup_gui()
 
-            # Pre-fill and connect
+            # Pre-fill username but don't auto-connect
             self.username_entry.insert(0, username)
-            self.root.after(100, self.auto_connect)  # Connect after GUI is shown
+
+            # Show main window
             self.root.deiconify()  # Show main window
+            self.root.update()  # Force window update
+            self.center_window()  # Center the window
         else:
             self.root.destroy()  # Exit if no username provided
-
     def auto_connect(self):
         """Automatically connect with the pre-filled username"""
         self.connect()

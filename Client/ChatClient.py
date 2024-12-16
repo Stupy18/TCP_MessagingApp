@@ -82,45 +82,45 @@ class ChatClient:
 
     def perform_key_exchange(self):
         try:
-            print("\n=== Client Key Exchange Start ===")
+
 
             # Generate ECDHE keypair
             self.private_key, self.public_key = KeyExchange.generate_key_pair()
-            print("✓ Generated ECDHE keypair")
+
 
             # Get ECDHE public key bytes
             public_key_bytes = self.public_key.public_bytes(
                 encoding=serialization.Encoding.Raw,
                 format=serialization.PublicFormat.Raw
             )
-            print(f"✓ Client ECDHE public key (first 16 bytes): {public_key_bytes[:16].hex()}")
+
 
             # Send client's public key
             self.client_socket.send(public_key_bytes)
-            print("✓ Sent ECDHE public key to server")
+
 
             # Receive server's ECDHE public key and ECDSA signature
             server_public_key_bytes = self.client_socket.recv(32)
             if not server_public_key_bytes:
                 raise ConnectionError("Failed to receive server's public key")
-            print(f"✓ Received server ECDHE public key (first 16 bytes): {server_public_key_bytes[:16].hex()}")
+
 
             # Receive server's ECDSA public key
             server_ecdsa_public_key_bytes = self.client_socket.recv(512)
             if not server_ecdsa_public_key_bytes:
                 raise ConnectionError("Failed to receive server's ECDSA public key")
-            print("✓ Received server ECDSA public key")
+
 
             # Receive signature
             signature = self.client_socket.recv(128)
             if not signature:
                 raise ConnectionError("Failed to receive server's signature")
-            print(f"✓ Received server signature (first 16 bytes): {signature[:16].hex()}")
+
 
             # Deserialize server's keys
             server_public_key = KeyExchange.deserialize_public_key(server_public_key_bytes)
             server_ecdsa_public_key = DigitalSignature.deserialize_public_key(server_ecdsa_public_key_bytes)
-            print("✓ Deserialized server keys")
+
 
             # Verify server's signature
             if not DigitalSignature.verify_signature(
@@ -129,22 +129,22 @@ class ChatClient:
                     public_key_bytes,
                     server_public_key_bytes
             ):
-                print("❌ SIGNATURE VERIFICATION FAILED!")
+
                 raise ConnectionError("Invalid server signature")
-            print("✓ Verified server signature successfully!")
+
 
             # Complete ECDHE key exchange
             shared_secret = KeyExchange.generate_shared_secret(self.private_key, server_public_key)
-            print(f"✓ Generated shared secret (first 16 bytes): {shared_secret[:16].hex()}")
+
 
             self.symmetric_key = KeyDerivation.derive_symmetric_key(shared_secret)
-            print(f"✓ Derived symmetric key (first 16 bytes): {self.symmetric_key[:16].hex()}")
 
-            print("=== Client Key Exchange Complete ===\n")
+
+
             return True
 
         except Exception as e:
-            print(f"❌ Key exchange failed: {str(e)}")
+
             raise ConnectionError(f"Key exchange failed: {str(e)}")
 
     def encrypt_message(self, message):

@@ -584,29 +584,23 @@ class ModernServerGUI:
     def perform_key_exchange(self, client_socket):
         try:
             client_address = self.clients[client_socket]["address"] if client_socket in self.clients else "Unknown"
-            print(f"\n=== Server Key Exchange Start for {client_address} ===")
 
             # Generate ECDHE keypair
             private_key, public_key = KeyExchange.generate_key_pair()
-            print("✓ Generated ECDHE keypair")
 
             # Receive client's public key
             client_public_key_bytes = client_socket.recv(32)
-            print(f"✓ Received client ECDHE public key (first 16 bytes): {client_public_key_bytes[:16].hex()}")
 
             client_public_key = KeyExchange.deserialize_public_key(client_public_key_bytes)
-            print("✓ Deserialized client ECDHE public key")
 
             # Get server's ECDHE public key bytes
             server_public_bytes = public_key.public_bytes(
                 encoding=serialization.Encoding.Raw,
                 format=serialization.PublicFormat.Raw
             )
-            print(f"✓ Server ECDHE public key (first 16 bytes): {server_public_bytes[:16].hex()}")
 
             # Get server's ECDSA public key bytes
             server_ecdsa_public_bytes = DigitalSignature.serialize_public_key(self.ecdsa_public_key)
-            print("✓ Serialized server ECDSA public key")
 
             # Generate signature over both public keys
             signature = DigitalSignature.sign_key_exchange(
@@ -614,30 +608,23 @@ class ModernServerGUI:
                 client_public_key_bytes,
                 server_public_bytes
             )
-            print(f"✓ Generated signature (first 16 bytes): {signature[:16].hex()}")
 
-            # Send all components
+
             client_socket.send(server_public_bytes)
-            print("✓ Sent ECDHE public key")
 
             client_socket.send(server_ecdsa_public_bytes)
-            print("✓ Sent ECDSA public key")
 
             client_socket.send(signature)
-            print("✓ Sent signature")
 
-            # Generate shared secret and derive symmetric key
+
             shared_secret = KeyExchange.generate_shared_secret(private_key, client_public_key)
-            print(f"✓ Generated shared secret (first 16 bytes): {shared_secret[:16].hex()}")
 
             symmetric_key = KeyDerivation.derive_symmetric_key(shared_secret)
-            print(f"✓ Derived symmetric key (first 16 bytes): {symmetric_key[:16].hex()}")
 
-            print(f"=== Server Key Exchange Complete for {client_address} ===\n")
             return symmetric_key
 
         except Exception as e:
-            print(f"❌ Key exchange error: {str(e)}")
+
             self.update_text_widget(f"Error during key exchange: {str(e)}\n")
             raise
 
