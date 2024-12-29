@@ -12,6 +12,8 @@ from TLS.AES_GCM_CYPHER import AESGCMCipher
 import json
 from datetime import datetime
 
+from TLS.OpenSSlCertHandler import OpenSSLCertHandler
+
 
 class ModernServerGUI:
     def __init__(self):
@@ -583,50 +585,82 @@ class ModernServerGUI:
 
     def perform_key_exchange(self, client_socket):
         try:
-            client_address = self.clients[client_socket]["address"] if client_socket in self.clients else "Unknown"
+            print("Server: Starting key exchange")
+
+            # Load OpenSSL certificate handler
+            ssl_handler = OpenSSLCertHandler("E:/swords and sandals/OpenSSL/keys/server.crt", "E:/swords and sandals/OpenSSL/keys/server.key")
+            print("Server: Loaded SSL certificate handler")
 
             # Generate ECDHE keypair
             private_key, public_key = KeyExchange.generate_key_pair()
+            print("Server: Generated ECDHE keypair")
 
             # Receive client's public key
-            client_public_key_bytes = client_socket.recv(32)
+            client_public_key_bytes = client_socket.recv(32)  # X25519 key is always 32 bytes
+            if not client_public_key_bytes or len(client_public_key_bytes) != 32:
+                raise ConnectionError(f"Invalid client public key length: {len(client_public_key_bytes)}")
+            print(f"Server: Received client public key, length: {len(client_public_key_bytes)}")
 
             client_public_key = KeyExchange.deserialize_public_key(client_public_key_bytes)
+            print("Server: Deserialized client public key")
 
-            # Get server's ECDHE public key bytes
+            # Get server's public key bytes
             server_public_bytes = public_key.public_bytes(
                 encoding=serialization.Encoding.Raw,
                 format=serialization.PublicFormat.Raw
             )
+            print(f"Server: Generated server public key, length: {len(server_public_bytes)}")
 
             # Get server's ECDSA public key bytes
             server_ecdsa_public_bytes = DigitalSignature.serialize_public_key(self.ecdsa_public_key)
+            print(f"Server: Generated ECDSA public key, length: {len(server_ecdsa_public_bytes)}")
 
-            # Generate signature over both public keys
-            signature = DigitalSignature.sign_key_exchange(
+            # Generate signatures
+            ecdsa_signature = DigitalSignature.sign_key_exchange(
                 self.ecdsa_private_key,
                 client_public_key_bytes,
                 server_public_bytes
             )
+            print(f"Server: Generated ECDSA signature, length: {len(ecdsa_signature)}")
 
+            data_to_sign = client_public_key_bytes + server_public_bytes
+            print(f"Server: Data to sign length: {len(data_to_sign)}")
+            print(f"Server: First few bytes to sign: {data_to_sign[:32].hex()}")
+
+            openssl_signature = ssl_handler.sign_data(data_to_sign)
+            print(f"Server: Generated OpenSSL signature, length: {len(openssl_signature)}")
+
+            # Send data with proper length prefixes
+            cert_data = ssl_handler.get_certificate_data()
+            client_socket.send(len(cert_data).to_bytes(4, 'big'))
+            client_socket.send(cert_data)
+            print(f"Server: Sent certificate, length: {len(cert_data)}")
 
             client_socket.send(server_public_bytes)
+            print("Server: Sent server public key")
 
+            client_socket.send(len(server_ecdsa_public_bytes).to_bytes(4, 'big'))
             client_socket.send(server_ecdsa_public_bytes)
+            print("Server: Sent ECDSA public key")
 
-            client_socket.send(signature)
+            client_socket.send(len(ecdsa_signature).to_bytes(4, 'big'))
+            client_socket.send(ecdsa_signature)
+            print("Server: Sent ECDSA signature")
 
+            client_socket.send(len(openssl_signature).to_bytes(4, 'big'))
+            client_socket.send(openssl_signature)
+            print("Server: Sent OpenSSL signature")
 
+            # Complete ECDHE key exchange
             shared_secret = KeyExchange.generate_shared_secret(private_key, client_public_key)
-
             symmetric_key = KeyDerivation.derive_symmetric_key(shared_secret)
+            print("Server: Key exchange completed successfully")
 
             return symmetric_key
 
         except Exception as e:
-
-            self.update_text_widget(f"Error during key exchange: {str(e)}\n")
-            raise
+            print(f"Server: Key exchange failed: {str(e)}")
+            raise ConnectionError(f"Key exchange failed: {str(e)}")
 
     def on_closing(self):
         if self.is_running:
