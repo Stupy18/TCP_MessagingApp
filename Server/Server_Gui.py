@@ -3,16 +3,19 @@ from tkinter import ttk, scrolledtext, messagebox
 import socket
 import threading
 import base64
+import time
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives import hashes
 
-from TLS.DigitalSigniture import DigitalSignature
-from TLS.KeyExchange import KeyExchange
-from TLS.KeyDerivation import KeyDerivation
 from TLS.AES_GCM_CYPHER import AESGCMCipher
-import json
+from TLS.DigitalSigniture import DigitalSignature
+from TLS.KeyDerivation import KeyDerivation
+from TLS.KeyExchange import KeyExchange
+from TLS.OpenSSlCertHandler import OpenSSLCertHandler
 from datetime import datetime
 
-from TLS.OpenSSlCertHandler import OpenSSLCertHandler
+from TLS.SecurityConstants import SecurityConstants
 
 
 class ModernServerGUI:
@@ -60,7 +63,7 @@ class ModernServerGUI:
 
         # Define colors
         self.colors = {
-            "primary": "#1a237e",  # Deep blue
+            "primary": "#1a237e",
             "secondary": "#283593",
             "accent": "#3949ab",
             "success": "#43a047",
@@ -235,65 +238,6 @@ class ModernServerGUI:
 
         self.rooms_tree.pack(expand=True, fill=tk.BOTH, pady=5)
 
-    def clear_logs(self):
-        if messagebox.askyesno("Clear Logs", "Are you sure you want to clear the logs?"):
-            self.text_widget.configure(state=tk.NORMAL)
-            self.text_widget.delete(1.0, tk.END)
-            self.text_widget.configure(state=tk.DISABLED)
-
-    def disconnect_selected_client(self):
-        selection = self.clients_tree.selection()
-        if not selection:
-            messagebox.showwarning("Warning", "Please select a client to disconnect")
-            return
-
-        if messagebox.askyesno("Confirm Disconnect", "Are you sure you want to disconnect the selected client?"):
-            for item in selection:
-                values = self.clients_tree.item(item)['values']
-                ip, port = values[0], values[1]
-
-                # Find the corresponding client socket
-                for client_socket, client_data in self.clients.items():
-                    if client_data["address"] == (ip, int(port)):
-                        self.disconnect_client(client_socket)
-                        break
-
-    def disconnect_all_clients(self):
-        if not self.clients:
-            messagebox.showinfo("Info", "No clients connected")
-            return
-
-        if messagebox.askyesno("Confirm Disconnect All", "Are you sure you want to disconnect all clients?"):
-            for client_socket in list(self.clients.keys()):
-                self.disconnect_client(client_socket)
-
-    def close_selected_room(self):
-        selection = self.rooms_tree.selection()
-        if not selection:
-            messagebox.showwarning("Warning", "Please select a room to close")
-            return
-
-        if messagebox.askyesno("Confirm Close Room", "Are you sure you want to close the selected room?"):
-            for item in selection:
-                values = self.rooms_tree.item(item)['values']
-                room_name = values[0]
-
-                if room_name in self.rooms:
-                    # Disconnect all clients from the room
-                    for client_socket in self.rooms[room_name][:]:
-                        self.leave_room(client_socket, room_name)
-
-    def close_all_rooms(self):
-        if not self.rooms:
-            messagebox.showinfo("Info", "No active rooms")
-            return
-
-        if messagebox.askyesno("Confirm Close All", "Are you sure you want to close all rooms?"):
-            room_names = list(self.rooms.keys())
-            for room_name in room_names:
-                for client_socket in self.rooms[room_name][:]:
-                    self.leave_room(client_socket, room_name)
-
     def create_status_bar(self):
         status_bar = ttk.Frame(self.main_container, style="Status.TFrame")
         status_bar.pack(fill=tk.X, side=tk.BOTTOM)
@@ -358,7 +302,6 @@ class ModernServerGUI:
             self.update_text_widget(f"Failed to start server: {str(e)}\n")
 
     def accept_connections(self):
-        """Handle incoming client connections"""
         while self.is_running:
             try:
                 client_socket, client_address = self.server_socket.accept()
@@ -369,14 +312,268 @@ class ModernServerGUI:
                 )
                 client_thread.start()
             except Exception as e:
-                if self.is_running:  # Only show error if server is still meant to be running
+                if self.is_running:
                     self.update_text_widget(f"Error accepting connection: {str(e)}\n")
+
+    def handle_client(self, client_socket, client_address):
+        try:
+            ip, port = client_address
+            self.update_text_widget(f"Client connected: {ip}:{port}\n")
+
+            # Update statistics
+            self.stats["total_connections"] += 1
+            self.stats["active_connections"] += 1
+
+            # Perform key exchange with fixed block processing
+            symmetric_key = self.perform_key_exchange(client_socket)
+
+            self.clients[client_socket] = {
+                "address": client_address,
+                "symmetric_key": symmetric_key,
+                "rooms": [],
+                "connect_time": datetime.now(),
+                "message_buffer": b''
+            }
+
+            self.root.after(0, self.update_client_list)
+
+            while self.is_running:
+                try:
+                    # Receive data in fixed blocks
+                    block = client_socket.recv(SecurityConstants.BLOCK_SIZE)
+                    if not block:
+                        break
+
+                    # Add to client's message buffer
+                    self.clients[client_socket]["message_buffer"] += block
+
+                    try:
+                        # Try to process complete message
+                        buffer = self.clients[client_socket]["message_buffer"]
+                        decoded_data = base64.b64decode(buffer)
+                        decrypted_message = AESGCMCipher.decrypt(symmetric_key, decoded_data)
+
+                        # Clear buffer after successful decryption
+                        self.clients[client_socket]["message_buffer"] = b''
+
+                        self.stats["total_messages"] += 1
+
+                        # Process message
+                        if decrypted_message.startswith("/join "):
+                            room_name = decrypted_message.split(" ", 1)[1].strip()
+                            self.join_room(client_socket, room_name)
+                        elif decrypted_message.startswith("/leave "):
+                            room_name = decrypted_message.split(" ", 1)[1].strip()
+                            self.leave_room(client_socket, room_name)
+                        else:
+                            self.broadcast(decrypted_message, client_socket)
+
+                        self.root.after(0, self.update_rooms_list)
+                    except:
+                        # If decoding fails, message might be incomplete
+                        continue
+
+
+                except Exception as e:
+
+                    self.update_text_widget(f"Error with client {ip}:{port}: {str(e)}\n")
+
+                    break
+
+
+        finally:
+
+            self.disconnect_client(client_socket)
+
+    def perform_key_exchange(self, client_socket):
+        try:
+            print("\n=== SERVER KEY EXCHANGE START ===")
+            print("Loading certificates and initializing...")
+
+            # Load OpenSSL certificate handler
+            ssl_handler = OpenSSLCertHandler(
+                "E:/swords and sandals/OpenSSL/keys/server.crt",
+                "E:/swords and sandals/OpenSSL/keys/server.key"
+            )
+            print("✓ SSL handler loaded successfully")
+
+            # First receive the X25519 public key (exactly 32 bytes)
+            client_public_key_bytes = client_socket.recv(32)
+            print(f"\n1. Received client's X25519 public key:")
+            print(f"   Length: {len(client_public_key_bytes)} bytes")
+            print(f"   Hex value: {client_public_key_bytes.hex()[:32]}...")
+
+            # Now receive the additional client data blocks
+            print("\n2. Receiving client data blocks:")
+            client_blocks = [client_public_key_bytes]
+            for i in range(3):  # timestamp, username, device_id
+                block = client_socket.recv(SecurityConstants.BLOCK_SIZE)
+                print(f"   Block {i + 1} received, length: {len(block)} bytes")
+                print(f"   Content preview: {block[:32].hex()}")
+                client_blocks.append(block)
+
+            print("\n3. Extracting and preparing keys:")
+            # Extract client's public key
+            client_public_key = KeyExchange.deserialize_public_key(client_public_key_bytes)
+            print("   ✓ Client public key deserialized")
+
+            # Generate server's ECDHE keypair
+            private_key, public_key = KeyExchange.generate_key_pair()
+            server_public_bytes = public_key.public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw
+            )
+            print(f"   ✓ Generated server X25519 key pair, public key length: {len(server_public_bytes)}")
+
+            # Get server's ECDSA public key bytes
+            server_ecdsa_public_bytes = self.ecdsa_public_key.public_bytes(
+                encoding=serialization.Encoding.DER,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+            print(f"   ✓ Prepared ECDSA public key, length: {len(server_ecdsa_public_bytes)}")
+
+            print("\n4. Preparing server data blocks:")
+            # Prepare server blocks
+            server_blocks = [
+                server_public_bytes,
+                server_ecdsa_public_bytes,
+                DigitalSignature.prepare_data_block(str(int(time.time()))),
+                DigitalSignature.prepare_data_block(self.host)
+            ]
+
+            print("   Block structure:")
+            for i, block in enumerate(server_blocks):
+                print(f"   Block {i + 1}: Length = {len(block)} bytes")
+                print(f"   Content preview: {block[:32].hex()}")
+
+            print("\n5. Creating verification chain:")
+            # Create verification blocks
+            verify_blocks = client_blocks + server_blocks
+            print(f"   Total blocks in chain: {len(verify_blocks)}")
+
+            chain_data = b''.join(verify_blocks)
+            print(f"   Total chain length: {len(chain_data)} bytes")
+
+            # Calculate chain hash
+            hasher = hashes.Hash(hashes.SHA256())
+            hasher.update(chain_data)
+            chain_hash = hasher.finalize()
+            print(f"   Chain hash (SHA256): {chain_hash.hex()}")
+
+            print("\n6. Generating signatures:")
+            # Generate ECDSA signature
+            ecdsa_signature = self.ecdsa_private_key.sign(
+                chain_data,
+                ec.ECDSA(hashes.SHA256())
+            )
+            print(f"   ECDSA signature length: {len(ecdsa_signature)} bytes")
+            print(f"   Signature preview: {ecdsa_signature[:32].hex()}")
+
+            # Sign with OpenSSL
+            openssl_signature = ssl_handler.sign_data(chain_data)
+            print(f"   OpenSSL signature length: {len(openssl_signature)} bytes")
+            print(f"   Signature preview: {openssl_signature[:32].hex()}")
+
+            print("\n7. Sending data to client:")
+            # Send certificate
+            cert_data = ssl_handler.get_certificate_data()
+            cert_len_bytes = len(cert_data).to_bytes(4, 'big', signed=False)
+            print(f"   Certificate length bytes: {cert_len_bytes.hex()}")
+            print(f"   Certificate actual length: {len(cert_data)}")
+            client_socket.send(cert_len_bytes)
+
+            # Send certificate in blocks
+            remaining = len(cert_data)
+            sent = 0
+            while remaining > 0:
+                chunk_size = min(SecurityConstants.BLOCK_SIZE, remaining)
+                chunk = cert_data[sent:sent + chunk_size]
+                client_socket.send(chunk)
+                sent += chunk_size
+                remaining -= chunk_size
+                print(f"   Sent certificate chunk: {chunk_size} bytes")
+            print(f"   ✓ Sent complete certificate ({len(cert_data)} bytes)")
+
+            # Send server's X25519 public key
+            client_socket.send(server_public_bytes)
+            print("   ✓ Sent server X25519 public key")
+
+            # Send ECDSA public key
+            client_socket.send(len(server_ecdsa_public_bytes).to_bytes(4, 'big'))
+            client_socket.send(server_ecdsa_public_bytes)
+            print("   ✓ Sent ECDSA public key")
+
+            # Send other server blocks
+            for block in server_blocks[2:]:
+                client_socket.send(block)
+            print("   ✓ Sent additional server blocks")
+
+            # Send signatures
+            client_socket.send(len(ecdsa_signature).to_bytes(4, 'big'))
+            client_socket.send(ecdsa_signature)
+            client_socket.send(len(openssl_signature).to_bytes(4, 'big'))
+            client_socket.send(openssl_signature)
+            print("   ✓ Sent both signatures")
+
+            print("\n8. Completing key exchange:")
+            # Complete ECDHE key exchange
+            shared_secret = KeyExchange.generate_shared_secret(private_key, client_public_key)
+            symmetric_key = KeyDerivation.derive_symmetric_key(shared_secret)
+            print("   ✓ Generated shared secret")
+            print(f"   ✓ Derived symmetric key (length: {len(symmetric_key)} bytes)")
+            print("   ✓ Key exchange completed successfully")
+            print("=== SERVER KEY EXCHANGE COMPLETE ===\n")
+
+            return symmetric_key
+
+        except Exception as e:
+            print(f"\n❌ SERVER ERROR: Key exchange failed: {str(e)}")
+            raise ConnectionError(f"Key exchange failed: {str(e)}")
+
+    def broadcast(self, message, sender_socket):
+        sender_ip, sender_port = self.clients[sender_socket]["address"]
+        sender_rooms = self.clients[sender_socket]["rooms"]
+
+        for room_name in sender_rooms:
+            formatted_message = f"[{room_name}] {sender_ip}:{sender_port}: {message}"
+            self.update_text_widget(formatted_message + "\n")
+
+            for client_socket in self.rooms[room_name]:
+                if client_socket != sender_socket:
+                    try:
+                        symmetric_key = self.clients[client_socket]["symmetric_key"]
+                        encrypted_message = AESGCMCipher.encrypt(symmetric_key, formatted_message)
+
+                        # Send encrypted message in blocks
+                        encoded_message = base64.b64encode(encrypted_message)
+                        for i in range(0, len(encoded_message), SecurityConstants.BLOCK_SIZE):
+                            block = encoded_message[i:i + SecurityConstants.BLOCK_SIZE]
+                            client_socket.send(block)
+
+                    except Exception as e:
+                        self.update_text_widget(f"Error broadcasting message: {str(e)}\n")
+
+    def broadcast_system_message(self, message, room_name):
+        system_message = f"[SYSTEM] {message}"
+        if room_name in self.rooms:
+            for client_socket in self.rooms[room_name]:
+                try:
+                    symmetric_key = self.clients[client_socket]["symmetric_key"]
+                    encrypted_message = AESGCMCipher.encrypt(symmetric_key, system_message)
+
+                    # Send encrypted message in blocks
+                    encoded_message = base64.b64encode(encrypted_message)
+                    for i in range(0, len(encoded_message), SecurityConstants.BLOCK_SIZE):
+                        block = encoded_message[i:i + SecurityConstants.BLOCK_SIZE]
+                        client_socket.send(block)
+
+                except Exception as e:
+                    self.update_text_widget(f"Error sending system message: {str(e)}\n")
 
     def stop(self):
         if messagebox.askyesno("Confirm Stop", "Are you sure you want to stop the server?"):
             self.is_running = False
 
-            # Close the server socket to stop accept_connections
             if self.server_socket:
                 try:
                     self.server_socket.close()
@@ -384,11 +581,9 @@ class ModernServerGUI:
                     pass
                 self.server_socket = None
 
-            # Disconnect all clients
             for client_socket in list(self.clients.keys()):
                 self.disconnect_client(client_socket)
 
-            # Wait for accept thread to finish if it exists
             if self.accept_thread and self.accept_thread.is_alive():
                 self.accept_thread.join(timeout=1.0)
 
@@ -400,7 +595,6 @@ class ModernServerGUI:
             self.host_entry.config(state=tk.NORMAL)
             self.port_entry.config(state=tk.NORMAL)
 
-            # Reset statistics
             self.stats = {
                 "total_connections": 0,
                 "active_connections": 0,
@@ -408,110 +602,15 @@ class ModernServerGUI:
                 "start_time": None
             }
 
-    def update_text_widget(self, message):
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        formatted_message = f"[{timestamp}] {message}"
-
-        self.text_widget.configure(state=tk.NORMAL)
-        self.text_widget.insert(tk.END, formatted_message)
-        self.text_widget.configure(state=tk.DISABLED)
-        self.text_widget.see(tk.END)
-
-    def update_client_list(self):
-        # Clear existing items
-        for item in self.clients_tree.get_children():
-            self.clients_tree.delete(item)
-
-        # Add current clients
-        for client_socket, client_data in self.clients.items():
-            ip, port = client_data["address"]
-            connected_time = datetime.now() - client_data.get("connect_time", datetime.now())
-            rooms = ", ".join(client_data["rooms"]) or "None"
-
-            self.clients_tree.insert("", tk.END, values=(
-                ip,
-                port,
-                str(connected_time).split(".")[0],
-                rooms
-            ))
-
-    def update_rooms_list(self):
-        # Clear existing items
-        for item in self.rooms_tree.get_children():
-            self.rooms_tree.delete(item)
-
-        # Add current rooms
-        for room_name, clients in self.rooms.items():
-            self.rooms_tree.insert("", tk.END, values=(
-                room_name,
-                len(clients),
-                self.get_room_message_count(room_name)
-            ))
-
-    def get_room_message_count(self, room_name):
-        # This could be enhanced to actually track messages per room
-        return "N/A"
-
-    def handle_client(self, client_socket, client_address):
-        try:
-            ip, port = client_address
-            self.update_text_widget(f"Client connected: {ip}:{port}\n")
-
-            # Update statistics
-            self.stats["total_connections"] += 1
-            self.stats["active_connections"] += 1
-
-            symmetric_key = self.perform_key_exchange(client_socket)
-            self.clients[client_socket] = {
-                "address": client_address,
-                "symmetric_key": symmetric_key,
-                "rooms": [],
-                "connect_time": datetime.now()
-            }
-
-            self.root.after(0, self.update_client_list)
-
-            while self.is_running:
-                try:
-                    encrypted_data = client_socket.recv(1024)
-                    if not encrypted_data:
-                        break
-
-                    decoded_data = base64.b64decode(encrypted_data)
-                    decrypted_message = AESGCMCipher.decrypt(symmetric_key, decoded_data)
-
-                    self.stats["total_messages"] += 1
-
-                    if decrypted_message.startswith("/join "):
-                        room_name = decrypted_message.split(" ", 1)[1].strip()
-                        self.join_room(client_socket, room_name)
-                    elif decrypted_message.startswith("/leave "):
-                        room_name = decrypted_message.split(" ", 1)[1].strip()
-                        self.leave_room(client_socket, room_name)
-                    else:
-                        self.broadcast(decrypted_message, client_socket)
-
-                    self.root.after(0, self.update_rooms_list)
-
-                except Exception as e:
-                    self.update_text_widget(f"Error with client {ip}:{port}: {str(e)}\n")
-                    break
-
-        finally:
-            self.disconnect_client(client_socket)
-
     def disconnect_client(self, client_socket):
         if client_socket in self.clients:
             ip, port = self.clients[client_socket]["address"]
 
-            # Leave all rooms
             for room_name in list(self.clients[client_socket]["rooms"]):
                 self.leave_room(client_socket, room_name)
 
-            # Update statistics
             self.stats["active_connections"] -= 1
 
-            # Clean up client data
             del self.clients[client_socket]
             client_socket.close()
 
@@ -529,7 +628,6 @@ class ModernServerGUI:
             ip, port = self.clients[client_socket]["address"]
             self.update_text_widget(f"Client {ip}:{port} joined room: {room_name}\n")
 
-            # Notify all clients in the room about the new member
             join_message = f"User {ip}:{port} has joined the room."
             self.broadcast_system_message(join_message, room_name)
 
@@ -544,134 +642,115 @@ class ModernServerGUI:
 
             self.update_text_widget(f"Client {ip}:{port} left room: {room_name}\n")
 
-            # Notify remaining clients
             leave_message = f"User {ip}:{port} has left the room."
             self.broadcast_system_message(leave_message, room_name)
 
-            # Clean up empty rooms
             if not self.rooms[room_name]:
                 del self.rooms[room_name]
                 self.update_text_widget(f"Room '{room_name}' has been closed (no active users)\n")
 
             self.root.after(0, lambda: (self.update_client_list(), self.update_rooms_list()))
 
-    def broadcast_system_message(self, message, room_name):
-        system_message = f"[SYSTEM] {message}"
-        if room_name in self.rooms:
-            for client_socket in self.rooms[room_name]:
-                try:
-                    symmetric_key = self.clients[client_socket]["symmetric_key"]
-                    encrypted_message = AESGCMCipher.encrypt(symmetric_key, system_message)
-                    client_socket.send(base64.b64encode(encrypted_message))
-                except Exception as e:
-                    self.update_text_widget(f"Error sending system message: {str(e)}\n")
+    def update_text_widget(self, message):
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        formatted_message = f"[{timestamp}] {message}"
 
-    def broadcast(self, message, sender_socket):
-        sender_ip, sender_port = self.clients[sender_socket]["address"]
-        sender_rooms = self.clients[sender_socket]["rooms"]
+        self.text_widget.configure(state=tk.NORMAL)
+        self.text_widget.insert(tk.END, formatted_message)
+        self.text_widget.configure(state=tk.DISABLED)
+        self.text_widget.see(tk.END)
 
-        for room_name in sender_rooms:
-            formatted_message = f"[{room_name}] {sender_ip}:{sender_port}: {message}"
-            self.update_text_widget(formatted_message + "\n")
+    def update_client_list(self):
+        for item in self.clients_tree.get_children():
+            self.clients_tree.delete(item)
 
-            for client_socket in self.rooms[room_name]:
-                if client_socket != sender_socket:
-                    try:
-                        symmetric_key = self.clients[client_socket]["symmetric_key"]
-                        encrypted_message = AESGCMCipher.encrypt(symmetric_key, formatted_message)
-                        client_socket.send(base64.b64encode(encrypted_message))
-                    except Exception as e:
-                        self.update_text_widget(f"Error broadcasting message: {str(e)}\n")
+        for client_socket, client_data in self.clients.items():
+            ip, port = client_data["address"]
+            connected_time = datetime.now() - client_data.get("connect_time", datetime.now())
+            rooms = ", ".join(client_data["rooms"]) or "None"
 
-    def perform_key_exchange(self, client_socket):
-        try:
-            print("Server: Starting key exchange")
+            self.clients_tree.insert("", tk.END, values=(
+                ip,
+                port,
+                str(connected_time).split(".")[0],
+                rooms
+            ))
 
-            # Load OpenSSL certificate handler
-            ssl_handler = OpenSSLCertHandler("E:/swords and sandals/OpenSSL/keys/server.crt", "E:/swords and sandals/OpenSSL/keys/server.key")
-            print("Server: Loaded SSL certificate handler")
+    def update_rooms_list(self):
+        for item in self.rooms_tree.get_children():
+            self.rooms_tree.delete(item)
 
-            # Generate ECDHE keypair
-            private_key, public_key = KeyExchange.generate_key_pair()
-            print("Server: Generated ECDHE keypair")
+        for room_name, clients in self.rooms.items():
+            self.rooms_tree.insert("", tk.END, values=(
+                room_name,
+                len(clients),
+                self.get_room_message_count(room_name)
+            ))
 
-            # Receive client's public key
-            client_public_key_bytes = client_socket.recv(32)  # X25519 key is always 32 bytes
-            if not client_public_key_bytes or len(client_public_key_bytes) != 32:
-                raise ConnectionError(f"Invalid client public key length: {len(client_public_key_bytes)}")
-            print(f"Server: Received client public key, length: {len(client_public_key_bytes)}")
+    def get_room_message_count(self, room_name):
+        return "N/A"
 
-            client_public_key = KeyExchange.deserialize_public_key(client_public_key_bytes)
-            print("Server: Deserialized client public key")
+    def clear_logs(self):
+        if messagebox.askyesno("Clear Logs", "Are you sure you want to clear the logs?"):
+            self.text_widget.configure(state=tk.NORMAL)
+            self.text_widget.delete(1.0, tk.END)
+            self.text_widget.configure(state=tk.DISABLED)
 
-            # Get server's public key bytes
-            server_public_bytes = public_key.public_bytes(
-                encoding=serialization.Encoding.Raw,
-                format=serialization.PublicFormat.Raw
-            )
-            print(f"Server: Generated server public key, length: {len(server_public_bytes)}")
+    def disconnect_selected_client(self):
+        selection = self.clients_tree.selection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select a client to disconnect")
+            return
 
-            # Get server's ECDSA public key bytes
-            server_ecdsa_public_bytes = DigitalSignature.serialize_public_key(self.ecdsa_public_key)
-            print(f"Server: Generated ECDSA public key, length: {len(server_ecdsa_public_bytes)}")
+        if messagebox.askyesno("Confirm Disconnect",
+                               "Are you sure you want to disconnect the selected client?"):
+            for item in selection:
+                values = self.clients_tree.item(item)['values']
+                ip, port = values[0], values[1]
 
-            # Generate signatures
-            ecdsa_signature = DigitalSignature.sign_key_exchange(
-                self.ecdsa_private_key,
-                client_public_key_bytes,
-                server_public_bytes
-            )
-            print(f"Server: Generated ECDSA signature, length: {len(ecdsa_signature)}")
+                for client_socket, client_data in self.clients.items():
+                    if client_data["address"] == (ip, int(port)):
+                        self.disconnect_client(client_socket)
+                        break
 
-            data_to_sign = client_public_key_bytes + server_public_bytes
-            print(f"Server: Data to sign length: {len(data_to_sign)}")
-            print(f"Server: First few bytes to sign: {data_to_sign[:32].hex()}")
+    def disconnect_all_clients(self):
+        if not self.clients:
+            messagebox.showinfo("Info", "No clients connected")
+            return
 
-            openssl_signature = ssl_handler.sign_data(data_to_sign)
-            print(f"Server: Generated OpenSSL signature, length: {len(openssl_signature)}")
+        if messagebox.askyesno("Confirm Disconnect All",
+                               "Are you sure you want to disconnect all clients?"):
+            for client_socket in list(self.clients.keys()):
+                self.disconnect_client(client_socket)
 
-            # Send data with proper length prefixes
-            cert_data = ssl_handler.get_certificate_data()
-            client_socket.send(len(cert_data).to_bytes(4, 'big'))
-            client_socket.send(cert_data)
-            print(f"Server: Sent certificate, length: {len(cert_data)}")
+    def close_selected_room(self):
+        selection = self.rooms_tree.selection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select a room to close")
+            return
 
-            client_socket.send(server_public_bytes)
-            print("Server: Sent server public key")
+        if messagebox.askyesno("Confirm Close Room",
+                               "Are you sure you want to close the selected room?"):
+            for item in selection:
+                values = self.rooms_tree.item(item)['values']
+                room_name = values[0]
 
-            client_socket.send(len(server_ecdsa_public_bytes).to_bytes(4, 'big'))
-            client_socket.send(server_ecdsa_public_bytes)
-            print("Server: Sent ECDSA public key")
+                if room_name in self.rooms:
+                    for client_socket in self.rooms[room_name][:]:
+                        self.leave_room(client_socket, room_name)
 
-            client_socket.send(len(ecdsa_signature).to_bytes(4, 'big'))
-            client_socket.send(ecdsa_signature)
-            print("Server: Sent ECDSA signature")
+    def close_all_rooms(self):
+        if not self.rooms:
+            messagebox.showinfo("Info", "No active rooms")
+            return
 
-            client_socket.send(len(openssl_signature).to_bytes(4, 'big'))
-            client_socket.send(openssl_signature)
-            print("Server: Sent OpenSSL signature")
-
-            # Complete ECDHE key exchange
-            shared_secret = KeyExchange.generate_shared_secret(private_key, client_public_key)
-            symmetric_key = KeyDerivation.derive_symmetric_key(shared_secret)
-            print("Server: Key exchange completed successfully")
-
-            return symmetric_key
-
-        except Exception as e:
-            print(f"Server: Key exchange failed: {str(e)}")
-            raise ConnectionError(f"Key exchange failed: {str(e)}")
-
-    def on_closing(self):
-        if self.is_running:
-            if messagebox.askyesno("Quit", "Server is running. Stop server and quit?"):
-                self.stop()
-                self.root.destroy()
-        else:
-            self.root.destroy()
+        if messagebox.askyesno("Confirm Close All", "Are you sure you want to close all rooms?"):
+            room_names = list(self.rooms.keys())
+            for room_name in room_names:
+                for client_socket in self.rooms[room_name][:]:
+                    self.leave_room(client_socket, room_name)
 
     def export_logs(self):
-        """Export server logs to a file"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"server_log_{timestamp}.txt"
@@ -684,22 +763,29 @@ class ModernServerGUI:
             messagebox.showerror("Error", f"Failed to export logs: {str(e)}")
 
     def show_server_info(self):
-        """Display server information and statistics"""
         info = f"""
-    Server Information:
-    ------------------
-    Host: {self.host or 'Not running'}
-    Port: {self.port}
-    Status: {'Running' if self.is_running else 'Stopped'}
-
-    Statistics:
-    -----------
-    Total Connections: {self.stats['total_connections']}
-    Active Connections: {self.stats['active_connections']}
-    Total Messages: {self.stats['total_messages']}
-    Active Rooms: {len(self.rooms)}
-    """
+        Server Information:
+        ------------------
+        Host: {self.host or 'Not running'}
+        Port: {self.port}
+        Status: {'Running' if self.is_running else 'Stopped'}
+    
+        Statistics:
+        -----------
+        Total Connections: {self.stats['total_connections']}
+        Active Connections: {self.stats['active_connections']}
+        Total Messages: {self.stats['total_messages']}
+        Active Rooms: {len(self.rooms)}
+        """
         messagebox.showinfo("Server Information", info)
+
+    def on_closing(self):
+        if self.is_running:
+            if messagebox.askyesno("Quit", "Server is running. Stop server and quit?"):
+                self.stop()
+                self.root.destroy()
+        else:
+            self.root.destroy()
 
     def run(self):
         # Add menu bar
