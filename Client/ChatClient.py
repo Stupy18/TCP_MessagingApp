@@ -1,5 +1,7 @@
 import socket
 import base64
+import time
+import uuid
 
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
@@ -79,10 +81,27 @@ class ChatClient:
                 encrypted_data = self.client_socket.recv(1024)
                 if not encrypted_data:
                     raise ConnectionError("Server connection lost")
+
                 decoded_data = base64.b64decode(encrypted_data)
-                decrypted_message = AESGCMCipher.decrypt(self.symmetric_key, decoded_data)
+
+                # Process in fixed blocks
+                block_size = AESGCMCipher.BLOCK_SIZE + 60  # Include IV + HMAC + Tag
+                blocks = [decoded_data[i:i + block_size]
+                          for i in range(0, len(decoded_data), block_size)]
+
+                decrypted_blocks = []
+                for block in blocks:
+                    if len(block) == block_size:  # Only process complete blocks
+                        decrypted_block = AESGCMCipher.decrypt(
+                            self.symmetric_key,
+                            block,
+                            auth_key=self.auth_key
+                        )
+                        decrypted_blocks.append(decrypted_block)
+
+                message = b''.join(decrypted_blocks)
                 if self.message_callback:
-                    self.message_callback(decrypted_message)
+                    self.message_callback(message.decode().strip())
         except Exception as e:
             return False, str(e)
 
@@ -90,19 +109,26 @@ class ChatClient:
         try:
             print("Client: Starting key exchange")
 
-            # Generate ECDHE keypair
-            self.private_key, self.public_key = KeyExchange.generate_key_pair()
+            # Generate keypair with metadata - Fixed the unpack issue
+            self.private_key, self.public_key, self.metadata_hash = KeyExchange.generate_key_pair()
             print("Client: Generated ECDHE keypair")
 
             # Get public key bytes
-            public_key_bytes = self.public_key.public_bytes(
+            self.public_key_bytes = self.public_key.public_bytes(
                 encoding=serialization.Encoding.Raw,
                 format=serialization.PublicFormat.Raw
             )
-            print(f"Client: Public key length: {len(public_key_bytes)}")
+            print(f"Client: Public key length: {len(self.public_key_bytes)}")
+
+            # Create client info for digital signature
+            client_info = {
+                'ip': self.client_socket.getsockname()[0],
+                'id': str(uuid.uuid4()),
+                'timestamp': str(int(time.time()))
+            }
 
             # Send client's public key
-            self.client_socket.send(public_key_bytes)
+            self.client_socket.send(self.public_key_bytes)
             print("Client: Sent public key")
 
             # Receive server's certificate length and data
@@ -151,17 +177,18 @@ class ChatClient:
             server_public_key = KeyExchange.deserialize_public_key(server_public_key_bytes)
             server_ecdsa_public_key = DigitalSignature.deserialize_public_key(server_ecdsa_public_key_bytes)
 
+            # Verify ECDSA signature
             if not DigitalSignature.verify_signature(
                     server_ecdsa_public_key,
                     ecdsa_signature,
-                    public_key_bytes,
+                    self.public_key_bytes,
                     server_public_key_bytes
             ):
                 print("Client: ECDSA signature verification failed")
                 raise ConnectionError("Invalid ECDSA signature")
             print("Client: ECDSA signature verified")
 
-            data_to_verify = public_key_bytes + server_public_key_bytes
+            data_to_verify = self.public_key_bytes + server_public_key_bytes
             print(f"Client: Data to verify length: {len(data_to_verify)}")
             print(f"Client: First few bytes to verify: {data_to_verify[:32].hex()}")
 
@@ -180,11 +207,33 @@ class ChatClient:
             except Exception as e:
                 print(f"Client: OpenSSL verification error: {str(e)}")
                 raise ConnectionError("Invalid OpenSSL signature")
-            # Complete ECDHE key exchange
-            shared_secret = KeyExchange.generate_shared_secret(self.private_key, server_public_key)
-            self.symmetric_key = KeyDerivation.derive_symmetric_key(shared_secret)
-            print("Client: Key exchange completed successfully")
 
+            # Create fixed-block signature with metadata
+            signature = DigitalSignature.sign_key_exchange(
+                self.private_key,
+                self.public_key_bytes,
+                server_public_key_bytes,
+                client_info
+            )
+
+            # Complete key exchange with enhanced security including metadata
+            shared_secret = KeyExchange.generate_shared_secret(
+                self.private_key,
+                server_public_key,
+                self.metadata_hash  # Using stored metadata_hash
+            )
+
+            # Derive keys with enhanced context
+            key_material = KeyDerivation.derive_symmetric_key(
+                shared_secret,
+                context_info=f"{client_info['ip']}:{client_info['id']}".encode()
+            )
+
+            # Store both keys from the derived material
+            self.symmetric_key = key_material['encryption_key']
+            self.auth_key = key_material['auth_key']
+
+            print("Client: Key exchange completed successfully")
             return True
 
         except Exception as e:
@@ -193,7 +242,26 @@ class ChatClient:
 
     def encrypt_message(self, message):
         try:
-            encrypted_message = AESGCMCipher.encrypt(self.symmetric_key, message)
-            return base64.b64encode(encrypted_message)
+            # Convert message to blocks and pad
+            if isinstance(message, str):
+                message = message.encode()
+
+            padded_data = AESGCMCipher.pad_data(message)
+
+            # Process in fixed blocks
+            blocks = [padded_data[i:i + AESGCMCipher.BLOCK_SIZE]
+                      for i in range(0, len(padded_data), AESGCMCipher.BLOCK_SIZE)]
+
+            # Encrypt each block
+            encrypted_blocks = []
+            for block in blocks:
+                encrypted_block = AESGCMCipher.encrypt(
+                    self.symmetric_key,
+                    block,
+                    auth_key=self.auth_key
+                )
+                encrypted_blocks.append(encrypted_block)
+
+            return base64.b64encode(b''.join(encrypted_blocks))
         except Exception as e:
             raise Exception(f"Encryption failed: {str(e)}")
