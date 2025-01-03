@@ -11,3 +11,5 @@ class SecurityConstants:
 
     # Hash output size (SHA-256 = 32 bytes)
     HASH_SIZE = 32
+
+   

@@ -324,41 +324,28 @@ class ModernServerGUI:
             self.stats["total_connections"] += 1
             self.stats["active_connections"] += 1
 
-            # Perform key exchange with fixed block processing
             symmetric_key = self.perform_key_exchange(client_socket)
-
             self.clients[client_socket] = {
                 "address": client_address,
                 "symmetric_key": symmetric_key,
                 "rooms": [],
-                "connect_time": datetime.now(),
-                "message_buffer": b''
+                "connect_time": datetime.now()
             }
 
             self.root.after(0, self.update_client_list)
 
             while self.is_running:
                 try:
-                    # Receive data in fixed blocks
-                    block = client_socket.recv(SecurityConstants.BLOCK_SIZE)
-                    if not block:
+                    encrypted_data = client_socket.recv(1024)
+                    if not encrypted_data:
                         break
 
-                    # Add to client's message buffer
-                    self.clients[client_socket]["message_buffer"] += block
-
                     try:
-                        # Try to process complete message
-                        buffer = self.clients[client_socket]["message_buffer"]
-                        decoded_data = base64.b64decode(buffer)
+                        decoded_data = base64.b64decode(encrypted_data)
                         decrypted_message = AESGCMCipher.decrypt(symmetric_key, decoded_data)
-
-                        # Clear buffer after successful decryption
-                        self.clients[client_socket]["message_buffer"] = b''
 
                         self.stats["total_messages"] += 1
 
-                        # Process message
                         if decrypted_message.startswith("/join "):
                             room_name = decrypted_message.split(" ", 1)[1].strip()
                             self.join_room(client_socket, room_name)
@@ -369,20 +356,19 @@ class ModernServerGUI:
                             self.broadcast(decrypted_message, client_socket)
 
                         self.root.after(0, self.update_rooms_list)
-                    except:
-                        # If decoding fails, message might be incomplete
+
+                    except ValueError as e:
+                        self.update_text_widget(f"Failed to decrypt message from {ip}:{port}: {str(e)}\n")
+                        continue  # Skip this message and continue listening
+                    except Exception as e:
+                        self.update_text_widget(f"Error processing message from {ip}:{port}: {str(e)}\n")
                         continue
 
-
                 except Exception as e:
-
                     self.update_text_widget(f"Error with client {ip}:{port}: {str(e)}\n")
-
                     break
 
-
         finally:
-
             self.disconnect_client(client_socket)
 
     def perform_key_exchange(self, client_socket):
@@ -531,27 +517,52 @@ class ModernServerGUI:
             raise ConnectionError(f"Key exchange failed: {str(e)}")
 
     def broadcast(self, message, sender_socket):
-        sender_ip, sender_port = self.clients[sender_socket]["address"]
-        sender_rooms = self.clients[sender_socket]["rooms"]
+        try:
+            sender_ip, sender_port = self.clients[sender_socket]["address"]
+            sender_rooms = self.clients[sender_socket]["rooms"]
 
-        for room_name in sender_rooms:
-            formatted_message = f"[{room_name}] {sender_ip}:{sender_port}: {message}"
-            self.update_text_widget(formatted_message + "\n")
+            print(f"\nBroadcasting message in rooms: {sender_rooms}")
+            print(f"From: {sender_ip}:{sender_port}")
+            print(f"Message: {message}")
 
-            for client_socket in self.rooms[room_name]:
-                if client_socket != sender_socket:
+            for room_name in sender_rooms:
+                formatted_message = f"[{room_name}] {sender_ip}:{sender_port}: {message}"
+                self.update_text_widget(formatted_message + "\n")
+
+                if room_name not in self.rooms:
+                    print(f"Room {room_name} not found!")
+                    continue
+
+                recipients = [client for client in self.rooms[room_name] if client != sender_socket]
+                print(f"Recipients in room {room_name}: {len(recipients)}")
+
+                for client_socket in recipients:
                     try:
                         symmetric_key = self.clients[client_socket]["symmetric_key"]
                         encrypted_message = AESGCMCipher.encrypt(symmetric_key, formatted_message)
-
-                        # Send encrypted message in blocks
                         encoded_message = base64.b64encode(encrypted_message)
-                        for i in range(0, len(encoded_message), SecurityConstants.BLOCK_SIZE):
-                            block = encoded_message[i:i + SecurityConstants.BLOCK_SIZE]
-                            client_socket.send(block)
+
+                        # Send message length first
+                        message_length = len(encoded_message).to_bytes(4, 'big')
+                        client_socket.send(message_length)
+
+                        # Send message in chunks
+                        total_sent = 0
+                        while total_sent < len(encoded_message):
+                            sent = client_socket.send(encoded_message[total_sent:])
+                            if sent == 0:
+                                raise ConnectionError("Socket connection broken")
+                            total_sent += sent
+
+                        print(f"Message sent to {self.clients[client_socket]['address']}")
 
                     except Exception as e:
+                        print(f"Failed to send to client: {e}")
                         self.update_text_widget(f"Error broadcasting message: {str(e)}\n")
+
+        except Exception as e:
+            print(f"Broadcast error: {e}")
+            self.update_text_widget(f"Broadcast error: {str(e)}\n")
 
     def broadcast_system_message(self, message, room_name):
         system_message = f"[SYSTEM] {message}"

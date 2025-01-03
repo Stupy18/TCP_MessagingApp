@@ -97,26 +97,54 @@ class ChatClient:
     def listen_for_messages(self):
         try:
             buffer = b''
+            message_length = None
+
             while True:
-                chunk = self.client_socket.recv(SecurityConstants.BLOCK_SIZE)
-                if not chunk:
-                    raise ConnectionError("Server connection lost")
-
-                buffer += chunk
-
                 try:
-                    # Try to decode complete messages from buffer
-                    decoded_data = base64.b64decode(buffer)
-                    decrypted_message = AESGCMCipher.decrypt(self.symmetric_key, decoded_data)
-                    buffer = b''  # Clear buffer after successful decryption
+                    if message_length is None:
+                        # Try to read message length
+                        if len(buffer) < 4:
+                            data = self.client_socket.recv(4 - len(buffer))
+                            if not data:
+                                raise ConnectionError("Server connection lost")
+                            buffer += data
+                            continue
 
-                    if self.message_callback:
-                        self.message_callback(decrypted_message)
-                except:
-                    # If decoding fails, message might be incomplete
+                        message_length = int.from_bytes(buffer[:4], 'big')
+                        buffer = buffer[4:]
+
+                    # Read message content
+                    if len(buffer) < message_length:
+                        data = self.client_socket.recv(message_length - len(buffer))
+                        if not data:
+                            raise ConnectionError("Server connection lost")
+                        buffer += data
+                        continue
+
+                    # We have a complete message
+                    message_data = buffer[:message_length]
+                    buffer = buffer[message_length:]
+                    message_length = None
+
+                    # Process message
+                    try:
+                        decoded_data = base64.b64decode(message_data)
+                        decrypted_message = AESGCMCipher.decrypt(self.symmetric_key, decoded_data)
+                        if self.message_callback:
+                            print(f"\nReceived message: {decrypted_message}")
+                            self.message_callback(decrypted_message)
+                    except Exception as e:
+                        print(f"Error processing message: {e}")
+
+                except socket.error as e:
+                    if not self.connected:
+                        break
+                    print(f"Socket error: {e}")
                     continue
 
         except Exception as e:
+            if self.connected:
+                print(f"Error in message listener: {e}")
             return False, str(e)
 
     def perform_key_exchange(self):
