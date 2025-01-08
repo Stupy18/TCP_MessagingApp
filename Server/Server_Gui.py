@@ -1,3 +1,4 @@
+import time
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 import socket
@@ -587,71 +588,102 @@ class ModernServerGUI:
         try:
             print("Server: Starting key exchange")
 
-            # Load OpenSSL certificate handler
-            ssl_handler = OpenSSLCertHandler("E:/swords and sandals/OpenSSL/keys/server.crt", "E:/swords and sandals/OpenSSL/keys/server.key")
-            print("Server: Loaded SSL certificate handler")
-
-            # Generate ECDHE keypair
+            ssl_handler = OpenSSLCertHandler("E:/swords and sandals/OpenSSL/keys/server.crt",
+                                             "E:/swords and sandals/OpenSSL/keys/server.key")
             private_key, public_key = KeyExchange.generate_key_pair()
-            print("Server: Generated ECDHE keypair")
+            signing_private, signing_public = DigitalSignature.generate_keypair()
+            print("Server: Generated keypairs")
 
-            # Receive client's public key
-            client_public_key_bytes = client_socket.recv(32)  # X25519 key is always 32 bytes
-            if not client_public_key_bytes or len(client_public_key_bytes) != 32:
-                raise ConnectionError(f"Invalid client public key length: {len(client_public_key_bytes)}")
-            print(f"Server: Received client public key, length: {len(client_public_key_bytes)}")
+            # Receive with length prefixes
+            public_key_len = int.from_bytes(client_socket.recv(4), 'big')
+            client_public_key_bytes = client_socket.recv(public_key_len)
+
+            signing_key_len = int.from_bytes(client_socket.recv(4), 'big')
+            client_signing_public_bytes = client_socket.recv(signing_key_len)
+
+            # Receive client's timestamp
+            client_timestamp = int.from_bytes(client_socket.recv(8), 'big')
+
+            signature_len = int.from_bytes(client_socket.recv(4), 'big')
+            client_signature = client_socket.recv(signature_len)
+
+            print("Server: Received all client data")
+
+            client_handshake = {
+                'ip': client_socket.getpeername()[0],
+                'timestamp': client_timestamp,  # Use client's timestamp
+                'public_key': client_public_key_bytes.hex()
+            }
+
+            print(f"Client Handshake Data: {json.dumps(client_handshake, indent=2)}")
+
+            # Deserialize client's signing key and verify signature
+            client_signing_public = DigitalSignature.deserialize_public_key(client_signing_public_bytes)
+
+            if not DigitalSignature.verify_message(
+                    client_public_key_bytes.hex(),
+                    client_signature,
+                    client_signing_public,
+                    client_handshake['ip'],
+                    client_handshake['timestamp'],
+                    "client"
+            ):
+                raise ConnectionError("Invalid client signature")
+            print("Server: Verified client signature")
 
             client_public_key = KeyExchange.deserialize_public_key(client_public_key_bytes)
-            print("Server: Deserialized client public key")
 
-            # Get server's public key bytes
+            # Generate server keys and signatures
             server_public_bytes = public_key.public_bytes(
                 encoding=serialization.Encoding.Raw,
                 format=serialization.PublicFormat.Raw
             )
-            print(f"Server: Generated server public key, length: {len(server_public_bytes)}")
 
-            # Get server's ECDSA public key bytes
-            server_ecdsa_public_bytes = DigitalSignature.serialize_public_key(self.ecdsa_public_key)
-            print(f"Server: Generated ECDSA public key, length: {len(server_ecdsa_public_bytes)}")
-
-            # Generate signatures
-            ecdsa_signature = DigitalSignature.sign_key_exchange(
-                self.ecdsa_private_key,
-                client_public_key_bytes,
-                server_public_bytes
+            server_signing_public_bytes = signing_public.public_bytes(
+                encoding=serialization.Encoding.DER,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
             )
-            print(f"Server: Generated ECDSA signature, length: {len(ecdsa_signature)}")
 
+            server_handshake = {
+                'ip': client_socket.getsockname()[0],
+                'timestamp': client_handshake['timestamp'],  # Use same timestamp
+                'public_key': server_public_bytes.hex()
+            }
+
+            server_signature = DigitalSignature.sign_message(
+                server_public_bytes.hex(),
+                signing_private,
+                server_handshake['ip'],
+                server_handshake['timestamp'],
+                "server"
+            )
+
+            print(f"Server Handshake Data: {json.dumps(server_handshake, indent=2)}")
+
+            # Generate OpenSSL signature
             data_to_sign = client_public_key_bytes + server_public_bytes
-            print(f"Server: Data to sign length: {len(data_to_sign)}")
-            print(f"Server: First few bytes to sign: {data_to_sign[:32].hex()}")
-
             openssl_signature = ssl_handler.sign_data(data_to_sign)
-            print(f"Server: Generated OpenSSL signature, length: {len(openssl_signature)}")
 
-            # Send data with proper length prefixes
+            # Send all data with length prefixes
             cert_data = ssl_handler.get_certificate_data()
             client_socket.send(len(cert_data).to_bytes(4, 'big'))
             client_socket.send(cert_data)
-            print(f"Server: Sent certificate, length: {len(cert_data)}")
 
+            client_socket.send(len(server_public_bytes).to_bytes(4, 'big'))
             client_socket.send(server_public_bytes)
-            print("Server: Sent server public key")
 
-            client_socket.send(len(server_ecdsa_public_bytes).to_bytes(4, 'big'))
-            client_socket.send(server_ecdsa_public_bytes)
-            print("Server: Sent ECDSA public key")
+            client_socket.send(len(server_signing_public_bytes).to_bytes(4, 'big'))
+            client_socket.send(server_signing_public_bytes)
 
-            client_socket.send(len(ecdsa_signature).to_bytes(4, 'big'))
-            client_socket.send(ecdsa_signature)
-            print("Server: Sent ECDSA signature")
+            client_socket.send(len(server_signature).to_bytes(4, 'big'))
+            client_socket.send(server_signature)
 
             client_socket.send(len(openssl_signature).to_bytes(4, 'big'))
             client_socket.send(openssl_signature)
-            print("Server: Sent OpenSSL signature")
 
-            # Complete ECDHE key exchange
+            print("Server: Sent all handshake data")
+
+            # Complete key exchange
             shared_secret = KeyExchange.generate_shared_secret(private_key, client_public_key)
             symmetric_key = KeyDerivation.derive_symmetric_key(shared_secret)
             print("Server: Key exchange completed successfully")

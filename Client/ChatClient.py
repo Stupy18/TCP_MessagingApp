@@ -1,9 +1,12 @@
+import json
 import socket
 import base64
+import time
 
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives._serialization import PublicFormat
 
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import hashes
@@ -86,33 +89,67 @@ class ChatClient:
         except Exception as e:
             return False, str(e)
 
-    def perform_key_exchange(self):  # Client side
+    # ChatClient.py
+    # ChatClient.py
+    # In ChatClient.py
+    def perform_key_exchange(self):
         try:
             print("Client: Starting key exchange")
 
-            # Generate ECDHE keypair
+            # Generate keypairs
             self.private_key, self.public_key = KeyExchange.generate_key_pair()
-            print("Client: Generated ECDHE keypair")
+            self.signing_private, self.signing_public = DigitalSignature.generate_keypair()
+            print("Client: Generated keypairs")
 
-            # Get public key bytes
+            # Prepare keys and signature
             public_key_bytes = self.public_key.public_bytes(
                 encoding=serialization.Encoding.Raw,
                 format=serialization.PublicFormat.Raw
             )
-            print(f"Client: Public key length: {len(public_key_bytes)}")
 
-            # Send client's public key
+            signing_public_bytes = self.signing_public.public_bytes(
+                encoding=serialization.Encoding.DER,
+                format=PublicFormat.SubjectPublicKeyInfo
+            )
+
+            timestamp = int(time.time())  # Store single timestamp for entire exchange
+            handshake_data = {
+                'ip': self.client_socket.getsockname()[0],
+                'timestamp': timestamp,
+                'public_key': public_key_bytes.hex()
+            }
+
+            signature = DigitalSignature.sign_message(
+                public_key_bytes.hex(),
+                self.signing_private,
+                handshake_data['ip'],
+                handshake_data['timestamp'],
+                "client"
+            )
+
+            print(f"Client Handshake Data: {json.dumps(handshake_data, indent=2)}")
+
+            # Send with length prefixes
+            self.client_socket.send(len(public_key_bytes).to_bytes(4, 'big'))
             self.client_socket.send(public_key_bytes)
-            print("Client: Sent public key")
 
-            # Receive server's certificate length and data
+            self.client_socket.send(len(signing_public_bytes).to_bytes(4, 'big'))
+            self.client_socket.send(signing_public_bytes)
+
+            # Also send the timestamp
+            self.client_socket.send(timestamp.to_bytes(8, 'big'))
+
+            self.client_socket.send(len(signature).to_bytes(4, 'big'))
+            self.client_socket.send(signature)
+
+            print("Client: Sent all keys and signature")
+
+            # Receive server's certificate
             cert_len_bytes = self.client_socket.recv(4)
             if not cert_len_bytes:
                 raise ConnectionError("Failed to receive certificate length")
             cert_len = int.from_bytes(cert_len_bytes, 'big')
-            print(f"Client: Expected certificate length: {cert_len}")
 
-            # Receive certificate in chunks if necessary
             cert_data = b''
             remaining = cert_len
             while remaining > 0:
@@ -121,9 +158,7 @@ class ChatClient:
                     raise ConnectionError("Connection closed while receiving certificate")
                 cert_data += chunk
                 remaining -= len(chunk)
-            print(f"Client: Received certificate, length: {len(cert_data)}")
 
-            # Verify certificate
             try:
                 certificate = x509.load_pem_x509_certificate(cert_data, default_backend())
                 print("Client: Certificate loaded successfully")
@@ -131,42 +166,41 @@ class ChatClient:
                 print(f"Client: Certificate loading failed: {str(e)}")
                 raise
 
-            # Receive server's public keys and signatures with length checks
-            server_public_key_bytes = self.client_socket.recv(32)  # X25519 key is always 32 bytes
-            print(f"Client: Received server public key, length: {len(server_public_key_bytes)}")
+            # Receive server's keys and signatures
+            server_key_len = int.from_bytes(self.client_socket.recv(4), 'big')
+            server_public_key_bytes = self.client_socket.recv(server_key_len)
 
-            ecdsa_key_len = int.from_bytes(self.client_socket.recv(4), 'big')
-            server_ecdsa_public_key_bytes = self.client_socket.recv(ecdsa_key_len)
-            print(f"Client: Received ECDSA public key, length: {len(server_ecdsa_public_key_bytes)}")
+            # Receive signing public key
+            server_signing_key_len = int.from_bytes(self.client_socket.recv(4), 'big')
+            server_signing_public_bytes = self.client_socket.recv(server_signing_key_len)
+            server_signing_public = DigitalSignature.deserialize_public_key(server_signing_public_bytes)
 
-            ecdsa_sig_len = int.from_bytes(self.client_socket.recv(4), 'big')
-            ecdsa_signature = self.client_socket.recv(ecdsa_sig_len)
-            print(f"Client: Received ECDSA signature, length: {len(ecdsa_signature)}")
+            server_sig_len = int.from_bytes(self.client_socket.recv(4), 'big')
+            server_signature = self.client_socket.recv(server_sig_len)
 
-            openssl_sig_len = int.from_bytes(self.client_socket.recv(4), 'big')
-            openssl_signature = self.client_socket.recv(openssl_sig_len)
-            print(f"Client: Received OpenSSL signature, length: {len(openssl_signature)}")
+            server_handshake = {
+                'ip': self.client_socket.getpeername()[0],
+                'timestamp': timestamp,  # Use same timestamp
+                'public_key': server_public_key_bytes.hex()
+            }
 
-            # Verify signatures
-            server_public_key = KeyExchange.deserialize_public_key(server_public_key_bytes)
-            server_ecdsa_public_key = DigitalSignature.deserialize_public_key(server_ecdsa_public_key_bytes)
-
-            if not DigitalSignature.verify_signature(
-                    server_ecdsa_public_key,
-                    ecdsa_signature,
-                    public_key_bytes,
-                    server_public_key_bytes
+            if not DigitalSignature.verify_message(
+                    server_public_key_bytes.hex(),
+                    server_signature,
+                    server_signing_public,
+                    server_handshake['ip'],
+                    server_handshake['timestamp'],
+                    "server"
             ):
-                print("Client: ECDSA signature verification failed")
-                raise ConnectionError("Invalid ECDSA signature")
-            print("Client: ECDSA signature verified")
-
-            data_to_verify = public_key_bytes + server_public_key_bytes
-            print(f"Client: Data to verify length: {len(data_to_verify)}")
-            print(f"Client: First few bytes to verify: {data_to_verify[:32].hex()}")
+                raise ConnectionError("Invalid server signature")
+            print("Client: Server signature verified")
 
             # Verify OpenSSL signature
             try:
+                openssl_sig_len = int.from_bytes(self.client_socket.recv(4), 'big')
+                openssl_signature = self.client_socket.recv(openssl_sig_len)
+
+                data_to_verify = public_key_bytes + server_public_key_bytes
                 certificate.public_key().verify(
                     openssl_signature,
                     data_to_verify,
@@ -176,11 +210,13 @@ class ChatClient:
                     ),
                     hashes.SHA256()
                 )
-                print("Client: OpenSSL signature verified successfully")
+                print("Client: OpenSSL signature verified")
             except Exception as e:
                 print(f"Client: OpenSSL verification error: {str(e)}")
                 raise ConnectionError("Invalid OpenSSL signature")
-            # Complete ECDHE key exchange
+
+            # Complete key exchange
+            server_public_key = KeyExchange.deserialize_public_key(server_public_key_bytes)
             shared_secret = KeyExchange.generate_shared_secret(self.private_key, server_public_key)
             self.symmetric_key = KeyDerivation.derive_symmetric_key(shared_secret)
             print("Client: Key exchange completed successfully")
