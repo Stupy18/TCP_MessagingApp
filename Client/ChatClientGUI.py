@@ -10,7 +10,6 @@ from Client.LoginPopup import LoginPopup
 from Client.RoomPopup import RoomPopup
 
 
-
 class ChatGUI:
     def __init__(self):
         self.root = ctk.CTk()
@@ -36,6 +35,7 @@ class ChatGUI:
             self.center_window()  # Center the window
         else:
             self.root.destroy()  # Exit if no username provided
+
     def auto_connect(self):
         """Automatically connect with the pre-filled username"""
         self.connect()
@@ -69,8 +69,6 @@ class ChatGUI:
         self.root.geometry("1200x800")
         self.root.minsize(1000, 700)
         self.root.iconbitmap("../assets/icon.ico")
-
-
 
         if sys.platform.startswith('win'):
             self.root.wm_attributes('-transparentcolor', 'white')
@@ -417,7 +415,7 @@ class ChatGUI:
             try:
                 server_ip = self.ip_entry.get()
                 server_port = int(self.port_entry.get())
-                username = self.username_entry.get()
+                username = self.username_entry.get().strip()
 
                 if not username:
                     messagebox.showerror("Error", "Username cannot be empty")

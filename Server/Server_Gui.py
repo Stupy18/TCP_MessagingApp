@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives import serialization
 from TLS.DigitalSigniture import DigitalSignature
 from TLS.KeyExchange import KeyExchange
 from TLS.KeyDerivation import KeyDerivation
-from TLS.AES_GCM_CYPHER import AESGCMCipher
+from TLS.AES_GCM_CYPHER import AESGCMCipher, send_encrypted_data, receive_encrypted_data
 import json
 from datetime import datetime
 
@@ -463,6 +463,9 @@ class ModernServerGUI:
             self.stats["active_connections"] += 1
 
             symmetric_key = self.perform_key_exchange(client_socket)
+            print(f"Debug - Server symmetric key type: {type(symmetric_key)}")
+            print(f"Debug - Server symmetric key length: {len(symmetric_key)} bytes")
+
             self.clients[client_socket] = {
                 "address": client_address,
                 "symmetric_key": symmetric_key,
@@ -474,12 +477,11 @@ class ModernServerGUI:
 
             while self.is_running:
                 try:
-                    encrypted_data = client_socket.recv(1024)
-                    if not encrypted_data:
-                        break
+                    encrypted_data = receive_encrypted_data(client_socket)
+                    print(f"Debug - Server received encrypted data length: {len(encrypted_data)}")
 
-                    decoded_data = base64.b64decode(encrypted_data)
-                    decrypted_message = AESGCMCipher.decrypt(symmetric_key, decoded_data)
+                    decrypted_message = AESGCMCipher.decrypt(symmetric_key, encrypted_data)
+                    print(f"Debug - Server decrypted message: {decrypted_message}")
 
                     self.stats["total_messages"] += 1
 
@@ -496,6 +498,7 @@ class ModernServerGUI:
 
                 except Exception as e:
                     self.update_text_widget(f"Error with client {ip}:{port}: {str(e)}\n")
+                    print(f"Debug - Server message handling error: {str(e)}")
                     break
 
         finally:
@@ -563,26 +566,32 @@ class ModernServerGUI:
                 try:
                     symmetric_key = self.clients[client_socket]["symmetric_key"]
                     encrypted_message = AESGCMCipher.encrypt(symmetric_key, system_message)
-                    client_socket.send(base64.b64encode(encrypted_message))
+                    send_encrypted_data(client_socket, encrypted_message)
                 except Exception as e:
                     self.update_text_widget(f"Error sending system message: {str(e)}\n")
 
     def broadcast(self, message, sender_socket):
-        sender_ip, sender_port = self.clients[sender_socket]["address"]
-        sender_rooms = self.clients[sender_socket]["rooms"]
+        try:
+            sender_ip, sender_port = self.clients[sender_socket]["address"]
+            sender_rooms = self.clients[sender_socket]["rooms"]
 
-        for room_name in sender_rooms:
-            formatted_message = f"[{room_name}] {sender_ip}:{sender_port}: {message}"
-            self.update_text_widget(formatted_message + "\n")
+            for room_name in sender_rooms:
+                formatted_message = f"[{room_name}] {sender_ip}:{sender_port}: {message}"
+                self.update_text_widget(formatted_message + "\n")
 
-            for client_socket in self.rooms[room_name]:
-                if client_socket != sender_socket:
-                    try:
-                        symmetric_key = self.clients[client_socket]["symmetric_key"]
-                        encrypted_message = AESGCMCipher.encrypt(symmetric_key, formatted_message)
-                        client_socket.send(base64.b64encode(encrypted_message))
-                    except Exception as e:
-                        self.update_text_widget(f"Error broadcasting message: {str(e)}\n")
+                for client_socket in self.rooms[room_name]:
+                    if client_socket != sender_socket:
+                        try:
+                            symmetric_key = self.clients[client_socket]["symmetric_key"]
+                            encrypted_message = AESGCMCipher.encrypt(symmetric_key, formatted_message)
+                            send_encrypted_data(client_socket, encrypted_message)
+                        except Exception as e:
+                            print(f"Debug - Broadcast encryption error: {str(e)}")
+                            self.update_text_widget(f"Error broadcasting message: {str(e)}\n")
+
+        except Exception as e:
+            print(f"Debug - Broadcast error: {str(e)}")
+            self.update_text_widget(f"Error in broadcast: {str(e)}\n")
 
     def perform_key_exchange(self, client_socket):
         try:
