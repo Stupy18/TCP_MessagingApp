@@ -21,13 +21,11 @@ class DigitalSignature:
     @staticmethod
     def sign_message(message, private_key, ip, timestamp, username):
         app_data = {
-            'ip': ip,
             'timestamp': timestamp,
             'username': username,
             'message': message
         }
         print("\nDigital Signature Data:")
-        print(f"IP: {ip}")
         print(f"Timestamp: {timestamp}")
         print(f"Username: {username}")
         print(f"Message: {message}")
@@ -50,7 +48,6 @@ class DigitalSignature:
     @staticmethod
     def verify_message(message, signature, public_key, ip, timestamp, username):
         print("\nVerifying Digital Signature:")
-        print(f"IP: {ip}")
         print(f"Timestamp: {timestamp}")
         print(f"Username: {username}")
         print(f"Message: {message}")
@@ -64,7 +61,6 @@ class DigitalSignature:
             return False
 
         app_data = {
-            'ip': ip,  # We'll ignore IP verification for forwarded connections
             'timestamp': timestamp,
             'username': username,
             'message': message

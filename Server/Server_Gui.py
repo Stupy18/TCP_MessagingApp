@@ -627,22 +627,19 @@ class ModernServerGUI:
             local_ip = client_socket.getsockname()[0]
 
             client_handshake = {
-                'ip': remote_ip,
                 'timestamp': client_timestamp,
                 'public_key': client_public_key_bytes.hex()
             }
 
             print(f"Client Handshake Data: {json.dumps(client_handshake, indent=2)}")
-
             # Deserialize client's signing key and verify signature
             client_signing_public = DigitalSignature.deserialize_public_key(client_signing_public_bytes)
 
-            # First try with remote IP
             signature_valid = DigitalSignature.verify_message(
                 client_public_key_bytes.hex(),
                 client_signature,
                 client_signing_public,
-                remote_ip,
+                "",  # Empty IP
                 client_handshake['timestamp'],
                 username
             )
@@ -678,7 +675,6 @@ class ModernServerGUI:
             )
 
             server_handshake = {
-                'ip': local_ip,
                 'timestamp': client_handshake['timestamp'],  # Use same timestamp
                 'public_key': server_public_bytes.hex()
             }
@@ -686,7 +682,7 @@ class ModernServerGUI:
             server_signature = DigitalSignature.sign_message(
                 server_public_bytes.hex(),
                 signing_private,
-                server_handshake['ip'],
+                "",  # Empty IP
                 server_handshake['timestamp'],
                 "server"
             )

@@ -138,7 +138,6 @@ class ChatClient:
 
             timestamp = int(time.time())  # Store single timestamp for entire exchange
             handshake_data = {
-                'ip': self.client_socket.getsockname()[0],
                 'timestamp': timestamp,
                 'public_key': public_key_bytes.hex()
             }
@@ -146,9 +145,9 @@ class ChatClient:
             signature = DigitalSignature.sign_message(
                 public_key_bytes.hex(),
                 self.signing_private,
-                handshake_data['ip'],
+                "",  # Empty IP
                 handshake_data['timestamp'],
-                username  # Use username instead of hardcoded "client"
+                username
             )
 
             print(f"Client Handshake Data: {json.dumps(handshake_data, indent=2)}")
