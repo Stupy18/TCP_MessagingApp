@@ -1,14 +1,13 @@
 import sys
 import tkinter
-
+from resource_path import get_resource_path
 import customtkinter as ctk
 from tkinter import messagebox
 import threading
 
-from Client.ChatClient import ChatClient
-from Client.LoginPopup import LoginPopup
-from Client.RoomPopup import RoomPopup
-
+from ChatClient import ChatClient
+from LoginPopup import LoginPopup
+from RoomPopup import RoomPopup
 
 class ChatGUI:
     def __init__(self):
@@ -68,7 +67,20 @@ class ChatGUI:
         self.root.title("Secure Chat")
         self.root.geometry("1200x800")
         self.root.minsize(1000, 700)
-        self.root.iconbitmap("../assets/icon.ico")
+
+        def load_icon():
+            try:
+                # First try development path
+                self.root.iconbitmap("../assets/icon.ico")
+            except:
+                try:
+                    # Then try compiled path
+                    icon_path = get_resource_path("icon.ico")
+                    self.root.iconbitmap(icon_path)
+                except Exception as e:
+                    print(f"Warning: Could not load icon: {e}")
+
+        self.root.after(201, load_icon)
 
         if sys.platform.startswith('win'):
             self.root.wm_attributes('-transparentcolor', 'white')
@@ -526,7 +538,16 @@ class ChatGUI:
 
 if __name__ == "__main__":
     try:
+        import sys
+        import traceback
+        from tkinter import messagebox
+
         gui = ChatGUI()
         gui.run()
     except Exception as e:
-        messagebox.showerror("Fatal Error", f"Application failed to start: {str(e)}")
+        error_msg = f"Application failed to start:\n\n{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+        messagebox.showerror("Fatal Error", error_msg)
+        # Keep console open with error
+        print("\nError occurred:")
+        print(error_msg)
+        input("\nPress Enter to exit...")

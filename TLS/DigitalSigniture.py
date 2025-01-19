@@ -64,29 +64,35 @@ class DigitalSignature:
             return False
 
         app_data = {
-            'ip': ip,
+            'ip': ip,  # We'll ignore IP verification for forwarded connections
             'timestamp': timestamp,
             'username': username,
             'message': message
         }
-        serialized_data = json.dumps(app_data).encode()
-
-        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
-        z_prev = b''
-
-        for i in range(0, len(serialized_data), DigitalSignature.BLOCK_SIZE):
-            block = serialized_data[i:i + DigitalSignature.BLOCK_SIZE]
-            if len(block) < DigitalSignature.BLOCK_SIZE:
-                block += b'\0' * (DigitalSignature.BLOCK_SIZE - len(block))
-            digest.update(block + z_prev)
-            z_prev = digest.finalize()
-            digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
 
         try:
-            public_key.verify(signature, z_prev, ec.ECDSA(hashes.SHA256()))
-            return True
-        except InvalidSignature:
-            print("Invalid signature detected")
+            serialized_data = json.dumps(app_data).encode()
+            print(f"Serialized Data: {serialized_data.decode()}")
+
+            digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+            z_prev = b''
+
+            for i in range(0, len(serialized_data), DigitalSignature.BLOCK_SIZE):
+                block = serialized_data[i:i + DigitalSignature.BLOCK_SIZE]
+                if len(block) < DigitalSignature.BLOCK_SIZE:
+                    block += b'\0' * (DigitalSignature.BLOCK_SIZE - len(block))
+                digest.update(block + z_prev)
+                z_prev = digest.finalize()
+                digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+
+            try:
+                public_key.verify(signature, z_prev, ec.ECDSA(hashes.SHA256()))
+                return True
+            except InvalidSignature:
+                print("Invalid signature detected")
+                return False
+        except Exception as e:
+            print(f"Verification error: {str(e)}")
             return False
 
     @staticmethod

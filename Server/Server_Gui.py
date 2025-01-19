@@ -335,7 +335,7 @@ class ModernServerGUI:
 
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.bind((self.host, self.port))
-            self.server_socket.listen(5)
+            self.server_socket.listen(50)
 
             self.is_running = True
             self.stats["start_time"] = datetime.now()
@@ -616,11 +616,19 @@ class ModernServerGUI:
             signature_len = int.from_bytes(client_socket.recv(4), 'big')
             client_signature = client_socket.recv(signature_len)
 
+            # Receive username length and username
+            username_len = int.from_bytes(client_socket.recv(4), 'big')
+            username = client_socket.recv(username_len).decode('utf-8')
+
             print("Server: Received all client data")
 
+            # Get both the remote and local connection IPs
+            remote_ip = client_socket.getpeername()[0]
+            local_ip = client_socket.getsockname()[0]
+
             client_handshake = {
-                'ip': client_socket.getpeername()[0],
-                'timestamp': client_timestamp,  # Use client's timestamp
+                'ip': remote_ip,
+                'timestamp': client_timestamp,
                 'public_key': client_public_key_bytes.hex()
             }
 
@@ -629,15 +637,31 @@ class ModernServerGUI:
             # Deserialize client's signing key and verify signature
             client_signing_public = DigitalSignature.deserialize_public_key(client_signing_public_bytes)
 
-            if not DigitalSignature.verify_message(
+            # First try with remote IP
+            signature_valid = DigitalSignature.verify_message(
+                client_public_key_bytes.hex(),
+                client_signature,
+                client_signing_public,
+                remote_ip,
+                client_handshake['timestamp'],
+                username
+            )
+
+            # If first verification fails, try with local IP (for forwarded connections)
+            if not signature_valid:
+                print("First signature verification failed, trying with different IP configurations...")
+                signature_valid = DigitalSignature.verify_message(
                     client_public_key_bytes.hex(),
                     client_signature,
                     client_signing_public,
-                    client_handshake['ip'],
+                    '127.0.0.1',  # Try localhost
                     client_handshake['timestamp'],
-                    "client"
-            ):
-                raise ConnectionError("Invalid client signature")
+                    username
+                )
+
+            if not signature_valid:
+                raise ConnectionError("Invalid client signature - verification failed with all IP configurations")
+
             print("Server: Verified client signature")
 
             client_public_key = KeyExchange.deserialize_public_key(client_public_key_bytes)
@@ -654,7 +678,7 @@ class ModernServerGUI:
             )
 
             server_handshake = {
-                'ip': client_socket.getsockname()[0],
+                'ip': local_ip,
                 'timestamp': client_handshake['timestamp'],  # Use same timestamp
                 'public_key': server_public_bytes.hex()
             }
