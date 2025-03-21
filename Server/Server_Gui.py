@@ -1,3 +1,4 @@
+import time
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 import socket
@@ -8,7 +9,7 @@ from cryptography.hazmat.primitives import serialization
 from TLS.DigitalSigniture import DigitalSignature
 from TLS.KeyExchange import KeyExchange
 from TLS.KeyDerivation import KeyDerivation
-from TLS.AES_GCM_CYPHER import AESGCMCipher
+from TLS.AES_GCM_CYPHER import AESGCMCipher, send_encrypted_data, receive_encrypted_data
 import json
 from datetime import datetime
 
@@ -334,7 +335,7 @@ class ModernServerGUI:
 
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.bind((self.host, self.port))
-            self.server_socket.listen(5)
+            self.server_socket.listen(50)
 
             self.is_running = True
             self.stats["start_time"] = datetime.now()
@@ -462,6 +463,9 @@ class ModernServerGUI:
             self.stats["active_connections"] += 1
 
             symmetric_key = self.perform_key_exchange(client_socket)
+            print(f"Debug - Server symmetric key type: {type(symmetric_key)}")
+            print(f"Debug - Server symmetric key length: {len(symmetric_key)} bytes")
+
             self.clients[client_socket] = {
                 "address": client_address,
                 "symmetric_key": symmetric_key,
@@ -473,12 +477,11 @@ class ModernServerGUI:
 
             while self.is_running:
                 try:
-                    encrypted_data = client_socket.recv(1024)
-                    if not encrypted_data:
-                        break
+                    encrypted_data = receive_encrypted_data(client_socket)
+                    print(f"Debug - Server received encrypted data length: {len(encrypted_data)}")
 
-                    decoded_data = base64.b64decode(encrypted_data)
-                    decrypted_message = AESGCMCipher.decrypt(symmetric_key, decoded_data)
+                    decrypted_message = AESGCMCipher.decrypt(symmetric_key, encrypted_data)
+                    print(f"Debug - Server decrypted message: {decrypted_message}")
 
                     self.stats["total_messages"] += 1
 
@@ -495,6 +498,7 @@ class ModernServerGUI:
 
                 except Exception as e:
                     self.update_text_widget(f"Error with client {ip}:{port}: {str(e)}\n")
+                    print(f"Debug - Server message handling error: {str(e)}")
                     break
 
         finally:
@@ -562,105 +566,225 @@ class ModernServerGUI:
                 try:
                     symmetric_key = self.clients[client_socket]["symmetric_key"]
                     encrypted_message = AESGCMCipher.encrypt(symmetric_key, system_message)
-                    client_socket.send(base64.b64encode(encrypted_message))
+                    send_encrypted_data(client_socket, encrypted_message)
                 except Exception as e:
                     self.update_text_widget(f"Error sending system message: {str(e)}\n")
 
     def broadcast(self, message, sender_socket):
-        sender_ip, sender_port = self.clients[sender_socket]["address"]
-        sender_rooms = self.clients[sender_socket]["rooms"]
+        try:
+            sender_ip, sender_port = self.clients[sender_socket]["address"]
+            sender_rooms = self.clients[sender_socket]["rooms"]
 
-        for room_name in sender_rooms:
-            formatted_message = f"[{room_name}] {sender_ip}:{sender_port}: {message}"
-            self.update_text_widget(formatted_message + "\n")
+            for room_name in sender_rooms:
+                if room_name not in self.rooms:
+                    continue  # Skip if room doesn't exist anymore
 
-            for client_socket in self.rooms[room_name]:
-                if client_socket != sender_socket:
-                    try:
-                        symmetric_key = self.clients[client_socket]["symmetric_key"]
-                        encrypted_message = AESGCMCipher.encrypt(symmetric_key, formatted_message)
-                        client_socket.send(base64.b64encode(encrypted_message))
-                    except Exception as e:
-                        self.update_text_widget(f"Error broadcasting message: {str(e)}\n")
+                formatted_message = f"[{room_name}] {sender_ip}:{sender_port}: {message}"
+                self.update_text_widget(formatted_message + "\n")
+
+                # Only broadcast to clients that are actually in this room
+                for client_socket in self.rooms[room_name]:
+                    if client_socket != sender_socket:
+                        try:
+                            symmetric_key = self.clients[client_socket]["symmetric_key"]
+                            encrypted_message = AESGCMCipher.encrypt(symmetric_key, formatted_message)
+                            send_encrypted_data(client_socket, encrypted_message)
+                        except Exception as e:
+                            print(f"Debug - Broadcast encryption error: {str(e)}")
+                            self.update_text_widget(f"Error broadcasting message: {str(e)}\n")
+        except Exception as e:
+            print(f"Debug - Broadcast error: {str(e)}")
+            self.update_text_widget(f"Error in broadcast: {str(e)}\n")
 
     def perform_key_exchange(self, client_socket):
         try:
-            print("Server: Starting key exchange")
+            print("Server: Starting TLS 1.3 handshake")
 
-            # Load OpenSSL certificate handler
-            ssl_handler = OpenSSLCertHandler("E:/swords and sandals/OpenSSL/keys/server.crt", "E:/swords and sandals/OpenSSL/keys/server.key")
-            print("Server: Loaded SSL certificate handler")
+            # Initialize cryptographic server materials
+            ssl_handler = self._initialize_server_materials()
 
-            # Generate ECDHE keypair
-            private_key, public_key = KeyExchange.generate_key_pair()
-            print("Server: Generated ECDHE keypair")
+            # Process ClientHello
+            client_data = self._receive_client_hello(client_socket)
+            client_public_key_bytes = client_data["public_key_bytes"]
+            client_signing_public = client_data["signing_public"]
+            client_timestamp = client_data["timestamp"]
+            username = client_data["username"]
 
-            # Receive client's public key
-            client_public_key_bytes = client_socket.recv(32)  # X25519 key is always 32 bytes
-            if not client_public_key_bytes or len(client_public_key_bytes) != 32:
-                raise ConnectionError(f"Invalid client public key length: {len(client_public_key_bytes)}")
-            print(f"Server: Received client public key, length: {len(client_public_key_bytes)}")
-
-            client_public_key = KeyExchange.deserialize_public_key(client_public_key_bytes)
-            print("Server: Deserialized client public key")
-
-            # Get server's public key bytes
-            server_public_bytes = public_key.public_bytes(
-                encoding=serialization.Encoding.Raw,
-                format=serialization.PublicFormat.Raw
-            )
-            print(f"Server: Generated server public key, length: {len(server_public_bytes)}")
-
-            # Get server's ECDSA public key bytes
-            server_ecdsa_public_bytes = DigitalSignature.serialize_public_key(self.ecdsa_public_key)
-            print(f"Server: Generated ECDSA public key, length: {len(server_ecdsa_public_bytes)}")
-
-            # Generate signatures
-            ecdsa_signature = DigitalSignature.sign_key_exchange(
-                self.ecdsa_private_key,
+            # Verify client signature
+            self._verify_client_signature(
                 client_public_key_bytes,
-                server_public_bytes
+                client_data["signature"],
+                client_signing_public,
+                client_timestamp,
+                username
             )
-            print(f"Server: Generated ECDSA signature, length: {len(ecdsa_signature)}")
 
-            data_to_sign = client_public_key_bytes + server_public_bytes
-            print(f"Server: Data to sign length: {len(data_to_sign)}")
-            print(f"Server: First few bytes to sign: {data_to_sign[:32].hex()}")
+            # Prepare and send ServerHello
+            client_public_key = KeyExchange.deserialize_public_key(client_public_key_bytes)
+            server_data = self._prepare_server_materials(client_timestamp)
+            server_public_bytes = server_data["public_bytes"]
 
-            openssl_signature = ssl_handler.sign_data(data_to_sign)
-            print(f"Server: Generated OpenSSL signature, length: {len(openssl_signature)}")
+            # Create signatures
+            signatures = self._create_server_signatures(
+                server_public_bytes,
+                client_public_key_bytes,
+                client_timestamp,
+                server_data["signing_private"],
+                ssl_handler
+            )
 
-            # Send data with proper length prefixes
-            cert_data = ssl_handler.get_certificate_data()
-            client_socket.send(len(cert_data).to_bytes(4, 'big'))
-            client_socket.send(cert_data)
-            print(f"Server: Sent certificate, length: {len(cert_data)}")
+            # Send ServerHello
+            self._send_server_hello(
+                client_socket,
+                ssl_handler,
+                server_public_bytes,
+                server_data["signing_public_bytes"],
+                signatures
+            )
 
-            client_socket.send(server_public_bytes)
-            print("Server: Sent server public key")
-
-            client_socket.send(len(server_ecdsa_public_bytes).to_bytes(4, 'big'))
-            client_socket.send(server_ecdsa_public_bytes)
-            print("Server: Sent ECDSA public key")
-
-            client_socket.send(len(ecdsa_signature).to_bytes(4, 'big'))
-            client_socket.send(ecdsa_signature)
-            print("Server: Sent ECDSA signature")
-
-            client_socket.send(len(openssl_signature).to_bytes(4, 'big'))
-            client_socket.send(openssl_signature)
-            print("Server: Sent OpenSSL signature")
-
-            # Complete ECDHE key exchange
-            shared_secret = KeyExchange.generate_shared_secret(private_key, client_public_key)
-            symmetric_key = KeyDerivation.derive_symmetric_key(shared_secret)
-            print("Server: Key exchange completed successfully")
+            # Derive symmetric key
+            symmetric_key = self._derive_symmetric_key(server_data["private_key"], client_public_key)
 
             return symmetric_key
 
         except Exception as e:
             print(f"Server: Key exchange failed: {str(e)}")
             raise ConnectionError(f"Key exchange failed: {str(e)}")
+
+    def _initialize_server_materials(self):
+        """Initialize SSL handler and generate key pairs."""
+        ssl_handler = OpenSSLCertHandler("E:/swords and sandals/OpenSSL/keys/server.crt",
+                                         "E:/swords and sandals/OpenSSL/keys/server.key")
+        self.private_key, self.public_key = KeyExchange.generate_key_pair()
+        self.signing_private, self.signing_public = DigitalSignature.generate_keypair()
+        print("Server: Generated keypairs")
+        return ssl_handler
+
+    def _receive_client_hello(self, client_socket):
+        """Receive and parse the ClientHello message."""
+        # Receive client's public key
+        public_key_len = int.from_bytes(client_socket.recv(4), 'big')
+        client_public_key_bytes = client_socket.recv(public_key_len)
+
+        # Receive client's signing public key
+        signing_key_len = int.from_bytes(client_socket.recv(4), 'big')
+        client_signing_public_bytes = client_socket.recv(signing_key_len)
+
+        # Receive timestamp from ClientHello
+        client_timestamp = int.from_bytes(client_socket.recv(8), 'big')
+
+        # Receive client's signature
+        signature_len = int.from_bytes(client_socket.recv(4), 'big')
+        client_signature = client_socket.recv(signature_len)
+
+        # Receive username
+        username_len = int.from_bytes(client_socket.recv(4), 'big')
+        username = client_socket.recv(username_len).decode('utf-8')
+
+        print("Server: Received ClientHello with key share")
+
+        # Parse client's signing public key
+        client_signing_public = DigitalSignature.deserialize_public_key(client_signing_public_bytes)
+
+        return {
+            "public_key_bytes": client_public_key_bytes,
+            "signing_public": client_signing_public,
+            "timestamp": client_timestamp,
+            "signature": client_signature,
+            "username": username
+        }
+
+    def _verify_client_signature(self, client_public_key_bytes, client_signature,
+                                 client_signing_public, client_timestamp, username):
+        """Verify the client's signature."""
+        if not DigitalSignature.verify_message(
+                client_public_key_bytes.hex(),
+                client_signature,
+                client_signing_public,
+                "",
+                client_timestamp,
+                username
+        ):
+            raise ConnectionError("Invalid client signature")
+
+        print("Server: Verified client signature")
+
+    def _prepare_server_materials(self, client_timestamp):
+        """Prepare the server's key material for ServerHello."""
+        # Generate server's key share
+        server_public_bytes = self.public_key.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw
+        )
+
+        server_signing_public_bytes = self.signing_public.public_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+
+        return {
+            "private_key": self.private_key,
+            "public_bytes": server_public_bytes,
+            "signing_private": self.signing_private,
+            "signing_public_bytes": server_signing_public_bytes,
+            "timestamp": client_timestamp
+        }
+
+    def _create_server_signatures(self, server_public_bytes, client_public_key_bytes,
+                                  timestamp, signing_private, ssl_handler):
+        """Create the signatures for the ServerHello message."""
+        # Create server signature
+        server_signature = DigitalSignature.sign_message(
+            server_public_bytes.hex(),
+            signing_private,
+            "",
+            timestamp,
+            "server"
+        )
+
+        # Generate OpenSSL signature
+        data_to_sign = client_public_key_bytes + server_public_bytes
+        openssl_signature = ssl_handler.sign_data(data_to_sign)
+
+        return {
+            "server_signature": server_signature,
+            "openssl_signature": openssl_signature
+        }
+
+    def _send_server_hello(self, client_socket, ssl_handler, server_public_bytes,
+                           server_signing_public_bytes, signatures):
+        """Send the ServerHello message to the client."""
+        # Send certificate
+        cert_data = ssl_handler.get_certificate_data()
+        client_socket.send(len(cert_data).to_bytes(4, 'big'))
+        client_socket.send(cert_data)
+
+        # Send server public key
+        client_socket.send(len(server_public_bytes).to_bytes(4, 'big'))
+        client_socket.send(server_public_bytes)
+
+        # Send server signing public key
+        client_socket.send(len(server_signing_public_bytes).to_bytes(4, 'big'))
+        client_socket.send(server_signing_public_bytes)
+
+        # Send server signature
+        server_signature = signatures["server_signature"]
+        client_socket.send(len(server_signature).to_bytes(4, 'big'))
+        client_socket.send(server_signature)
+
+        # Send OpenSSL signature
+        openssl_signature = signatures["openssl_signature"]
+        client_socket.send(len(openssl_signature).to_bytes(4, 'big'))
+        client_socket.send(openssl_signature)
+
+        print("Server: Sent ServerHello with key share")
+
+    def _derive_symmetric_key(self, private_key, client_public_key):
+        """Derive the shared symmetric key."""
+        shared_secret = KeyExchange.generate_shared_secret(private_key, client_public_key)
+        symmetric_key = KeyDerivation.derive_symmetric_key(shared_secret)
+        print("Server: TLS 1.3 handshake completed successfully")
+        return symmetric_key
 
     def on_closing(self):
         if self.is_running:
