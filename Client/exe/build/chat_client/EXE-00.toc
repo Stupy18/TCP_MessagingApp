@@ -82,7 +82,7 @@
  [],
  False,
  False,
- 1737041005,
+ 1737302923,
  [('runw.exe',
    'E:\\python\\Licenta_MessagingApp\\venv\\lib\\site-packages\\PyInstaller\\bootloader\\Windows-64bit-intel\\runw.exe',
    'EXECUTABLE')],

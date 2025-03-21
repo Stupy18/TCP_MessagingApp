@@ -63,6 +63,8 @@ class AESGCMCipher:
             return bytes(key)
         raise ValueError("Key must be bytes-like object")
 
+    
+
     @staticmethod
     def pad_record(message):
         """
@@ -156,6 +158,7 @@ class AESGCMCipher:
             # Combine IV, encrypted data, and authentication tag
             encrypted_message = iv + ciphertext + encryptor.tag
             print(f"Debug - Final encrypted message length: {len(encrypted_message)}")
+            print(f"Debug - Encrypted message: {encrypted_message}")
 
             # Verify block size
             if len(encrypted_message) % AESGCMCipher.BLOCK_SIZE != 0:

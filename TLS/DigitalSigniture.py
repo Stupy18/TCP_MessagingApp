@@ -10,7 +10,7 @@ from cryptography.hazmat.backends import default_backend
 class DigitalSignature:
     """Handles ECDSA signature generation and verification using P-256 curve with fixed-length blocks."""
 
-    BLOCK_SIZE = 256
+    BLOCK_SIZE = 32
     TIMESTAMP_TOLERANCE = 5
 
     @staticmethod

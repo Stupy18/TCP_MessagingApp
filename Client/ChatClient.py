@@ -82,7 +82,8 @@ class ChatClient:
         try:
             if room_name in self.rooms:
                 self.rooms.remove(room_name)
-                self.client_socket.send(self.encrypt_message(f"/leave {room_name}"))
+                encrypted_data = self.encrypt_message(f"/leave {room_name}")
+                send_encrypted_data(self.client_socket, encrypted_data)
                 return True, room_name
             return False, "Not in room"
         except Exception as e:
@@ -113,167 +114,167 @@ class ChatClient:
             print(f"Debug - Listen error: {str(e)}")
             return False, str(e)
 
-    # ChatClient.py
-    # ChatClient.py
-    # In ChatClient.py
-    def perform_key_exchange(self, username):  # Add username parameter
+    def perform_key_exchange(self, username):
         try:
-            print("Client: Starting key exchange")
+            print("Client: Starting TLS 1.3 handshake")
 
-            # Generate keypairs
-            self.private_key, self.public_key = KeyExchange.generate_key_pair()
-            self.signing_private, self.signing_public = DigitalSignature.generate_keypair()
-            print("Client: Generated keypairs")
+            # Generate keys and prepare ClientHello
+            self._generate_key_pairs()
+            public_key_bytes, signing_public_bytes = self._prepare_key_bytes()
+            timestamp = int(time.time())
 
-            # Prepare keys and signature
-            public_key_bytes = self.public_key.public_bytes(
-                encoding=serialization.Encoding.Raw,
-                format=serialization.PublicFormat.Raw
-            )
+            # Sign and send ClientHello
+            signature = self._create_client_hello_signature(public_key_bytes, timestamp, username)
+            self._send_client_hello(public_key_bytes, signing_public_bytes, timestamp, signature, username)
 
-            signing_public_bytes = self.signing_public.public_bytes(
-                encoding=serialization.Encoding.DER,
-                format=PublicFormat.SubjectPublicKeyInfo
-            )
+            # Receive and process ServerHello
+            certificate = self._receive_server_certificate()
+            server_public_key_bytes, server_signing_public = self._receive_server_key_material()
+            server_signature = self._receive_server_signature()
 
-            timestamp = int(time.time())  # Store single timestamp for entire exchange
-            handshake_data = {
-                'timestamp': timestamp,
-                'public_key': public_key_bytes.hex()
-            }
+            # Verify server's response
+            self._verify_server_signature(server_public_key_bytes, server_signature, server_signing_public, timestamp)
+            self._verify_certificate_signature(certificate, public_key_bytes, server_public_key_bytes)
 
-            signature = DigitalSignature.sign_message(
-                public_key_bytes.hex(),
-                self.signing_private,
-                "",  # Empty IP
-                handshake_data['timestamp'],
-                username
-            )
+            # Derive keys
+            self._derive_symmetric_key(server_public_key_bytes)
 
-            print(f"Client Handshake Data: {json.dumps(handshake_data, indent=2)}")
-
-            # Send with length prefixes
-            self.client_socket.send(len(public_key_bytes).to_bytes(4, 'big'))
-            self.client_socket.send(public_key_bytes)
-
-            self.client_socket.send(len(signing_public_bytes).to_bytes(4, 'big'))
-            self.client_socket.send(signing_public_bytes)
-
-            # Also send the timestamp
-            self.client_socket.send(timestamp.to_bytes(8, 'big'))
-
-            self.client_socket.send(len(signature).to_bytes(4, 'big'))
-            self.client_socket.send(signature)
-
-            print("Client: Sent all keys and signature")
-
-            username_bytes = username.encode('utf-8')
-            self.client_socket.send(len(username_bytes).to_bytes(4, 'big'))
-            self.client_socket.send(username_bytes)
-
-            print("Client: Sent username")
-
-            # Receive server's certificate
-            cert_len_bytes = self.client_socket.recv(4)
-            if not cert_len_bytes:
-                raise ConnectionError("Failed to receive certificate length")
-            cert_len = int.from_bytes(cert_len_bytes, 'big')
-
-            cert_data = b''
-            remaining = cert_len
-            while remaining > 0:
-                chunk = self.client_socket.recv(min(remaining, 4096))
-                if not chunk:
-                    raise ConnectionError("Connection closed while receiving certificate")
-                cert_data += chunk
-                remaining -= len(chunk)
-
-            try:
-                certificate = x509.load_pem_x509_certificate(cert_data, default_backend())
-                print("Client: Certificate loaded successfully")
-            except Exception as e:
-                print(f"Client: Certificate loading failed: {str(e)}")
-                raise
-
-            # Receive server's keys and signatures
-            server_key_len = int.from_bytes(self.client_socket.recv(4), 'big')
-            server_public_key_bytes = self.client_socket.recv(server_key_len)
-
-            # Receive signing public key
-            server_signing_key_len = int.from_bytes(self.client_socket.recv(4), 'big')
-            server_signing_public_bytes = self.client_socket.recv(server_signing_key_len)
-            server_signing_public = DigitalSignature.deserialize_public_key(server_signing_public_bytes)
-
-            server_sig_len = int.from_bytes(self.client_socket.recv(4), 'big')
-            server_signature = self.client_socket.recv(server_sig_len)
-
-            server_handshake = {
-                'ip': self.client_socket.getpeername()[0],
-                'timestamp': timestamp,  # Use same timestamp
-                'public_key': server_public_key_bytes.hex()
-            }
-
-            if not DigitalSignature.verify_message(
-                    server_public_key_bytes.hex(),
-                    server_signature,
-                    server_signing_public,
-                    server_handshake['ip'],
-                    server_handshake['timestamp'],
-                    "server"
-            ):
-                raise ConnectionError("Invalid server signature")
-            print("Client: Server signature verified")
-
-            # Verify OpenSSL signature
-            try:
-                openssl_sig_len = int.from_bytes(self.client_socket.recv(4), 'big')
-                openssl_signature = self.client_socket.recv(openssl_sig_len)
-
-                data_to_verify = public_key_bytes + server_public_key_bytes
-                certificate.public_key().verify(
-                    openssl_signature,
-                    data_to_verify,
-                    padding.PSS(
-                        mgf=padding.MGF1(hashes.SHA256()),
-                        salt_length=padding.PSS.MAX_LENGTH
-                    ),
-                    hashes.SHA256()
-                )
-                print("Client: OpenSSL signature verified")
-            except Exception as e:
-                print(f"Client: OpenSSL verification error: {str(e)}")
-                raise ConnectionError("Invalid OpenSSL signature")
-
-            # Complete key exchange
-            server_public_key = KeyExchange.deserialize_public_key(server_public_key_bytes)
-            shared_secret = KeyExchange.generate_shared_secret(self.private_key, server_public_key)
-
-            # Debug logging
-            print(f"Client: Shared secret type: {type(shared_secret)}")
-            print(f"Client: Shared secret length: {len(shared_secret)} bytes")
-
-            # Store symmetric key directly
-            derived_key = KeyDerivation.derive_symmetric_key(shared_secret)
-
-            # Verify key format
-            if not isinstance(derived_key, bytes):
-                raise ValueError("Generated symmetric key is not in bytes format")
-            if len(derived_key) != 32:
-                raise ValueError(f"Invalid symmetric key length: {len(derived_key)} bytes (expected 32)")
-
-            # Store the key
-            self.symmetric_key = derived_key
-
-            print(f"Client: Symmetric key type: {type(self.symmetric_key)}")
-            print(f"Client: Symmetric key length: {len(self.symmetric_key)} bytes")
-            print("Client: Key exchange completed successfully")
-
+            print("Client: TLS 1.3 handshake completed successfully")
             return True
 
         except Exception as e:
-            print(f"Client: Key exchange failed: {str(e)}")
-            self.symmetric_key = None  # Reset on failure
-            raise ConnectionError(f"Key exchange failed: {str(e)}")
+            print(f"Client: Handshake failed: {str(e)}")
+            self.symmetric_key = None
+            raise ConnectionError(f"Handshake failed: {str(e)}")
+
+    def _generate_key_pairs(self):
+        """Generate X25519 and ECDSA key pairs for the handshake."""
+        self.private_key, self.public_key = KeyExchange.generate_key_pair()
+        self.signing_private, self.signing_public = DigitalSignature.generate_keypair()
+
+    def _prepare_key_bytes(self):
+        """Prepare the serialized key bytes for transmission."""
+        public_key_bytes = self.public_key.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw
+        )
+        signing_public_bytes = self.signing_public.public_bytes(
+            encoding=serialization.Encoding.DER,
+            format=PublicFormat.SubjectPublicKeyInfo
+        )
+        return public_key_bytes, signing_public_bytes
+
+    def _create_client_hello_signature(self, public_key_bytes, timestamp, username):
+        """Create the signature for the ClientHello message."""
+        return DigitalSignature.sign_message(
+            public_key_bytes.hex(),
+            self.signing_private,
+            "",
+            timestamp,
+            username
+        )
+
+    def _send_client_hello(self, public_key_bytes, signing_public_bytes, timestamp, signature, username):
+        """Send the ClientHello message to the server."""
+        # Send public key
+        self.client_socket.send(len(public_key_bytes).to_bytes(4, 'big'))
+        self.client_socket.send(public_key_bytes)
+
+        # Send signing public key
+        self.client_socket.send(len(signing_public_bytes).to_bytes(4, 'big'))
+        self.client_socket.send(signing_public_bytes)
+
+        # Send timestamp, signature, and username
+        self.client_socket.send(timestamp.to_bytes(8, 'big'))
+        self.client_socket.send(len(signature).to_bytes(4, 'big'))
+        self.client_socket.send(signature)
+        username_bytes = username.encode('utf-8')
+        self.client_socket.send(len(username_bytes).to_bytes(4, 'big'))
+        self.client_socket.send(username_bytes)
+
+        print("Client: Sent ClientHello with key share")
+
+    def _receive_server_certificate(self):
+        """Receive and parse the server's certificate."""
+        cert_len = int.from_bytes(self.client_socket.recv(4), 'big')
+        cert_data = self._receive_full_data(cert_len)
+
+        # Parse certificate
+        certificate = x509.load_pem_x509_certificate(cert_data, default_backend())
+        print("Client: Received and loaded server certificate")
+        return certificate
+
+    def _receive_full_data(self, data_length):
+        """Helper to receive a complete block of data of specified length."""
+        data = b''
+        remaining = data_length
+        while remaining > 0:
+            chunk = self.client_socket.recv(min(remaining, 4096))
+            if not chunk:
+                raise ConnectionError("Connection closed while receiving data")
+            data += chunk
+            remaining -= len(chunk)
+        return data
+
+    def _receive_server_key_material(self):
+        """Receive the server's key material."""
+        # Receive server public key
+        server_key_len = int.from_bytes(self.client_socket.recv(4), 'big')
+        server_public_key_bytes = self.client_socket.recv(server_key_len)
+
+        # Receive server signing public key
+        server_signing_key_len = int.from_bytes(self.client_socket.recv(4), 'big')
+        server_signing_public_bytes = self.client_socket.recv(server_signing_key_len)
+        server_signing_public = DigitalSignature.deserialize_public_key(server_signing_public_bytes)
+
+        return server_public_key_bytes, server_signing_public
+
+    def _receive_server_signature(self):
+        """Receive the server's signature."""
+        server_sig_len = int.from_bytes(self.client_socket.recv(4), 'big')
+        server_signature = self.client_socket.recv(server_sig_len)
+        return server_signature
+
+    def _verify_server_signature(self, server_public_key_bytes, server_signature, server_signing_public, timestamp):
+        """Verify the server's signature."""
+        if not DigitalSignature.verify_message(
+                server_public_key_bytes.hex(),
+                server_signature,
+                server_signing_public,
+                "",
+                timestamp,
+                "server"
+        ):
+            raise ConnectionError("Invalid server signature")
+
+    def _verify_certificate_signature(self, certificate, public_key_bytes, server_public_key_bytes):
+        """Verify the certificate signature from the server."""
+        openssl_sig_len = int.from_bytes(self.client_socket.recv(4), 'big')
+        openssl_signature = self.client_socket.recv(openssl_sig_len)
+
+        data_to_verify = public_key_bytes + server_public_key_bytes
+        certificate.public_key().verify(
+            openssl_signature,
+            data_to_verify,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+        print("Client: Verified server signatures and certificate")
+
+    def _derive_symmetric_key(self, server_public_key_bytes):
+        """Derive the shared symmetric key."""
+        # Generate shared secret
+        server_public_key = KeyExchange.deserialize_public_key(server_public_key_bytes)
+        shared_secret = KeyExchange.generate_shared_secret(self.private_key, server_public_key)
+
+        # Derive final symmetric key
+        self.symmetric_key = KeyDerivation.derive_symmetric_key(shared_secret)
+
+        if not isinstance(self.symmetric_key, bytes) or len(self.symmetric_key) != 32:
+            raise ValueError(f"Invalid symmetric key generated: {len(self.symmetric_key)} bytes")
 
     def encrypt_message(self, message):
         try:
