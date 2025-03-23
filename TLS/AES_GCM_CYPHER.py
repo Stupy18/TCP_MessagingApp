@@ -15,7 +15,7 @@ def send_encrypted_data(client_socket, data):
         # Then send the actual data
         client_socket.sendall(data)
     except Exception as e:
-        print(f"Debug - Send encrypted data error: {str(e)}")
+
         raise
 
 
@@ -28,7 +28,6 @@ def receive_encrypted_data(client_socket):
             raise ConnectionError("Connection closed while receiving length")
 
         length = struct.unpack('>Q', length_bytes)[0]
-        print(f"Debug - Expected message length: {length}")
 
         # Then receive the actual data
         data = b''
@@ -40,10 +39,8 @@ def receive_encrypted_data(client_socket):
             data += chunk
             remaining -= len(chunk)
 
-        print(f"Debug - Received complete message of length: {len(data)}")
         return data
     except Exception as e:
-        print(f"Debug - Receive encrypted data error: {str(e)}")
         raise
 
 
@@ -63,8 +60,6 @@ class AESGCMCipher:
             return bytes(key)
         raise ValueError("Key must be bytes-like object")
 
-    
-
     @staticmethod
     def pad_record(message):
         """
@@ -78,12 +73,10 @@ class AESGCMCipher:
 
             message_bytes = message.encode('utf-8', errors='replace')
             original_length = len(message_bytes)
-            print(f"Debug - Padding message of length: {original_length}")
 
             # Calculate required padding
             total_size = AESGCMCipher.HEADER_SIZE + original_length + AESGCMCipher.TAG_SIZE
             padding_size = (AESGCMCipher.BLOCK_SIZE - (total_size % AESGCMCipher.BLOCK_SIZE)) % AESGCMCipher.BLOCK_SIZE
-            print(f"Debug - Adding padding of size: {padding_size}")
 
             # Create padding bytes (using PKCS7-style padding with valid bytes)
             padding = bytes([padding_size & 0xFF] * padding_size)
@@ -91,11 +84,11 @@ class AESGCMCipher:
             # Combine length, message, and padding
             length_bytes = struct.pack(">Q", original_length)  # 8 bytes for length
             padded_record = length_bytes + message_bytes + padding
-            print(f"Debug - Final padded record length: {len(padded_record)}")
+
             return padded_record
 
         except Exception as e:
-            print(f"Debug - Padding error: {str(e)}")
+
             raise ValueError(f"Failed to pad record: {str(e)}")
 
     @staticmethod
@@ -104,11 +97,9 @@ class AESGCMCipher:
         Removes record layer padding and returns original message.
         """
         try:
-            print(f"Debug - Unpadding data of length: {len(padded_data)}")
 
             # Extract original length
             original_length = struct.unpack(">Q", padded_data[:AESGCMCipher.LENGTH_SIZE])[0]
-            print(f"Debug - Original message length from header: {original_length}")
 
             # Validate length
             if original_length > len(padded_data) - AESGCMCipher.LENGTH_SIZE:
@@ -116,12 +107,10 @@ class AESGCMCipher:
 
             # Extract message using the original length
             message_bytes = padded_data[AESGCMCipher.LENGTH_SIZE:AESGCMCipher.LENGTH_SIZE + original_length]
-            print(f"Debug - Extracted message length: {len(message_bytes)}")
 
             return message_bytes.decode('utf-8', errors='replace')
 
         except Exception as e:
-            print(f"Debug - Unpadding error: {str(e)}")
             raise ValueError(f"Failed to unpad record: {str(e)}")
 
     @staticmethod
@@ -131,7 +120,6 @@ class AESGCMCipher:
         Format: [IV (12 bytes)][Encrypted(length + message + padding)][Tag (16 bytes)]
         """
         try:
-            print(f"Debug - Encrypting message: {plaintext}")
             # Ensure key is in correct format
             key = AESGCMCipher.ensure_bytes(key)
 
@@ -141,7 +129,6 @@ class AESGCMCipher:
 
             # Generate IV
             iv = os.urandom(12)
-            print(f"Debug - Generated IV length: {len(iv)}")
 
             # Initialize cipher
             cipher = Cipher(algorithms.AES(key), modes.GCM(iv), backend=default_backend())
@@ -149,16 +136,12 @@ class AESGCMCipher:
 
             # Pad the record
             padded_record = AESGCMCipher.pad_record(plaintext)
-            print(f"Debug - Padded record length: {len(padded_record)}")
 
             # Encrypt the padded record
             ciphertext = encryptor.update(padded_record) + encryptor.finalize()
-            print(f"Debug - Ciphertext length: {len(ciphertext)}")
 
             # Combine IV, encrypted data, and authentication tag
             encrypted_message = iv + ciphertext + encryptor.tag
-            print(f"Debug - Final encrypted message length: {len(encrypted_message)}")
-            print(f"Debug - Encrypted message: {encrypted_message}")
 
             # Verify block size
             if len(encrypted_message) % AESGCMCipher.BLOCK_SIZE != 0:
@@ -168,7 +151,6 @@ class AESGCMCipher:
             return encrypted_message
 
         except Exception as e:
-            print(f"Debug - Encryption error: {str(e)}")
             raise ValueError(f"Encryption failed: {str(e)}")
 
     @staticmethod
@@ -177,7 +159,6 @@ class AESGCMCipher:
         Decrypts a message using AES-GCM and removes padding.
         """
         try:
-            print(f"Debug - Decrypting message of length: {len(encrypted_message)}")
 
             # Ensure key is in correct format
             key = AESGCMCipher.ensure_bytes(key)
@@ -194,21 +175,15 @@ class AESGCMCipher:
             tag = encrypted_message[-AESGCMCipher.TAG_SIZE:]
             ciphertext = encrypted_message[12:-AESGCMCipher.TAG_SIZE]
 
-            print(f"Debug - IV length: {len(iv)}")
-            print(f"Debug - Tag length: {len(tag)}")
-            print(f"Debug - Ciphertext length: {len(ciphertext)}")
-
             # Initialize cipher
             cipher = Cipher(algorithms.AES(key), modes.GCM(iv, tag), backend=default_backend())
             decryptor = cipher.decryptor()
 
             # Decrypt the message
             padded_record = decryptor.update(ciphertext) + decryptor.finalize()
-            print(f"Debug - Decrypted padded record length: {len(padded_record)}")
 
             # Remove padding and return original message
             return AESGCMCipher.unpad_record(padded_record)
 
         except Exception as e:
-            print(f"Debug - Decryption error: {str(e)}")
             raise ValueError(f"Decryption failed: {str(e)}")

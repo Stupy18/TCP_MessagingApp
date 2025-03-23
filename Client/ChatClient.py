@@ -32,12 +32,12 @@ class ChatClient:
             success = self.perform_key_exchange(username)  # Pass username here
             if not success or self.symmetric_key is None:
                 raise ConnectionError("Key exchange failed or no symmetric key generated")
-            print(f"Debug - After connection, symmetric key type: {type(self.symmetric_key)}")
+
             self.username = username
             self.connected = True
             return True, f"Connected to {server_ip}:{server_port}"
         except Exception as e:
-            print(f"Debug - Connection error: {str(e)}")
+
             return False, str(e)
 
     def send_message(self, message):
@@ -46,26 +46,26 @@ class ChatClient:
                 return False, "Please join a room first"
 
             formatted_message = f"{self.username}: {message}"
-            print(f"Debug - Sending message: {formatted_message}")
+
 
             encrypted_data = self.encrypt_message(formatted_message)
-            print(f"Debug - Encrypted message length: {len(encrypted_data)}")
+
 
             send_encrypted_data(self.client_socket, encrypted_data)
             return True, formatted_message
         except Exception as e:
-            print(f"Debug - Send message error: {str(e)}")
+
             return False, str(e)
 
     def join_room(self, room_name):
         try:
             if room_name not in self.rooms:
-                print(f"Debug - Joining room: {room_name}")
+
                 command = f"/join {room_name}"
-                print(f"Debug - Sending command: {command}")
+
 
                 encrypted_data = self.encrypt_message(command)
-                print(f"Debug - Encrypted command length: {len(encrypted_data)}")
+
 
                 send_encrypted_data(self.client_socket, encrypted_data)
                 self.rooms.append(room_name)
@@ -75,7 +75,7 @@ class ChatClient:
         except Exception as e:
             if room_name in self.rooms:
                 self.rooms.remove(room_name)
-            print(f"Debug - Join room error: {str(e)}")
+
             return False, str(e)
 
     def leave_room(self, room_name):
@@ -102,22 +102,20 @@ class ChatClient:
         try:
             while True:
                 encrypted_data = receive_encrypted_data(self.client_socket)
-                print(f"Debug - Received encrypted data of length: {len(encrypted_data)}")
+
 
                 # Decrypt the data directly without base64 decoding
                 decrypted_message = AESGCMCipher.decrypt(self.symmetric_key, encrypted_data)
-                print(f"Debug - Decrypted message: {decrypted_message}")
+
 
                 if self.message_callback:
                     self.message_callback(decrypted_message)
         except Exception as e:
-            print(f"Debug - Listen error: {str(e)}")
+
             return False, str(e)
 
     def perform_key_exchange(self, username):
         try:
-            print("Client: Starting TLS 1.3 handshake")
-
             # Generate keys and prepare ClientHello
             self._generate_key_pairs()
             public_key_bytes, signing_public_bytes = self._prepare_key_bytes()
@@ -139,7 +137,6 @@ class ChatClient:
             # Derive keys
             self._derive_symmetric_key(server_public_key_bytes)
 
-            print("Client: TLS 1.3 handshake completed successfully")
             return True
 
         except Exception as e:
@@ -192,7 +189,6 @@ class ChatClient:
         self.client_socket.send(len(username_bytes).to_bytes(4, 'big'))
         self.client_socket.send(username_bytes)
 
-        print("Client: Sent ClientHello with key share")
 
     def _receive_server_certificate(self):
         """Receive and parse the server's certificate."""
@@ -201,7 +197,6 @@ class ChatClient:
 
         # Parse certificate
         certificate = x509.load_pem_x509_certificate(cert_data, default_backend())
-        print("Client: Received and loaded server certificate")
         return certificate
 
     def _receive_full_data(self, data_length):
@@ -262,7 +257,6 @@ class ChatClient:
             ),
             hashes.SHA256()
         )
-        print("Client: Verified server signatures and certificate")
 
     def _derive_symmetric_key(self, server_public_key_bytes):
         """Derive the shared symmetric key."""
@@ -278,7 +272,7 @@ class ChatClient:
 
     def encrypt_message(self, message):
         try:
-            print(f"Debug - encrypt_message called with symmetric key type: {type(self.symmetric_key)}")
+
             if self.symmetric_key is None:
                 raise ValueError("No symmetric key available - please ensure you're connected")
 
@@ -288,10 +282,10 @@ class ChatClient:
             if len(self.symmetric_key) != 32:
                 raise ValueError(f"Invalid symmetric key length: {len(self.symmetric_key)} bytes")
 
-            print(f"Debug - encrypting message: {message}")
+
             encrypted_message = AESGCMCipher.encrypt(self.symmetric_key, message)
             # Return the encrypted message directly without base64 encoding
             return encrypted_message
         except Exception as e:
-            print(f"Debug - Encryption error: {str(e)}")
+
             raise Exception(f"Encryption failed: {str(e)}")
