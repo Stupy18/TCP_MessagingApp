@@ -31,7 +31,7 @@ except ImportError as e:
         sys.exit(1)
 
 # Configuration
-SERVER_IP = "127.0.0.1"  # Change this to your server's IP address
+SERVER_IP = "188.24.92.229"  # Change this to your server's IP address
 SERVER_PORT = 8080  # Chat server port
 MONITOR_PORT = 8888  # Server monitor communication port
 NUM_CLIENTS = 100  # Adjust based on your hardware capability

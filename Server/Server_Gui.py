@@ -128,7 +128,7 @@ class ModernServerGUI:
 
         ttk.Label(controls_frame, text="Server IP:", style="Header.TLabel").pack(side=tk.LEFT, padx=5)
         self.host_entry = ttk.Entry(controls_frame, width=15)
-        self.host_entry.insert(0, "127.0.0.1")
+        self.host_entry.insert(0, "0.0.0.0")
         self.host_entry.pack(side=tk.LEFT, padx=5)
 
         ttk.Label(controls_frame, text="Port:", style="Header.TLabel").pack(side=tk.LEFT, padx=5)

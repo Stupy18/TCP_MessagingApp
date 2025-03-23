@@ -139,7 +139,7 @@ def main():
     start_monitor_server()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     print("Server CPU Monitor")
     print("=================")
     print("This script will monitor the server's CPU usage during performance testing.")

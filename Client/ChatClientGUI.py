@@ -229,7 +229,7 @@ class ChatGUI:
             fg_color=self.colors['surface_dark']
         )
         self.ip_entry.pack(pady=(5, 0))
-        self.ip_entry.insert(0, "127.0.0.1")
+        self.ip_entry.insert(0, "188.24.92.229")
 
         # Port input
         port_frame = ctk.CTkFrame(server_frame, fg_color="transparent")

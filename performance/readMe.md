@@ -38,7 +38,7 @@ This will start the CPU monitoring service on port 8888. Leave this running.
 4. Run the client tester, replacing `SERVER_IP` with your server's IP address:
 
 ```bash
-python client_tester.py SERVER_IP 8080 tls13 100 10 120
+python client_tester.py 188.24.92.229 8080 tls13 100 10 120
 ```
 
 Arguments:
