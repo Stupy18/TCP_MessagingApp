@@ -15,6 +15,7 @@ from TLS.DigitalSigniture import DigitalSignature
 from TLS.KeyExchange import KeyExchange
 from TLS.KeyDerivation import KeyDerivation
 from TLS.AES_GCM_CYPHER import AESGCMCipher, send_encrypted_data, receive_encrypted_data
+from TLS.RSAKeyExchange import RSAKeyExchange
 
 
 class ChatClient:
@@ -116,34 +117,51 @@ class ChatClient:
 
     def perform_key_exchange(self, username):
         try:
-            # Generate keys and prepare ClientHello
+            print("Client: Starting TLS 1.2 handshake")
+            # Step 1: Generate client signature key pair and prepare ClientHello
             self._generate_key_pairs()
-            public_key_bytes, signing_public_bytes = self._prepare_key_bytes()
+            print("Client: Generated key pairs")
+            signing_public_bytes = self._prepare_key_bytes()
+            print("Client: Prepared key bytes")
             timestamp = int(time.time())
 
             # Sign and send ClientHello
-            signature = self._create_client_hello_signature(public_key_bytes, timestamp, username)
-            self._send_client_hello(public_key_bytes, signing_public_bytes, timestamp, signature, username)
+            print("Client: Creating signature")
+            signature = self._create_client_hello_signature(timestamp, username)
+            print("Client: Sending ClientHello")
+            self._send_client_hello(signing_public_bytes, timestamp, signature, username)
 
-            # Receive and process ServerHello
+            # Step 2: Receive ServerHello with server's certificate and RSA public key
+            print("Client: Receiving server certificate")
             certificate = self._receive_server_certificate()
-            server_public_key_bytes, server_signing_public = self._receive_server_key_material()
+            print("Client: Extracting public key from certificate")
+            server_rsa_public_key = self._extract_public_key_from_certificate(certificate)
+            print("Client: Receiving server signing key")
+            server_signing_public = self._receive_server_signing_key()
+            print("Client: Receiving server signature")
             server_signature = self._receive_server_signature()
 
-            # Verify server's response
-            self._verify_server_signature(server_public_key_bytes, server_signature, server_signing_public, timestamp)
-            self._verify_certificate_signature(certificate, public_key_bytes, server_public_key_bytes)
+            # Verify server's signature
+            print("Client: Verifying server signature")
+            self._verify_server_signature(server_signature, server_signing_public, timestamp)
 
-            # Derive keys
-            self._derive_symmetric_key(server_public_key_bytes)
+            # Step 3: Generate pre-master secret, encrypt it with server's public key and send
+            print("Client: Generating and encrypting pre-master secret")
+            encrypted_secret, pre_master_secret = RSAKeyExchange.encrypt_pre_master_secret(server_rsa_public_key)
+            print("Client: Sending encrypted pre-master secret")
+            self._send_encrypted_pre_master_secret(encrypted_secret)
 
+            # Step 4: Derive master key and session keys
+            print("Client: Deriving symmetric key")
+            self._derive_symmetric_key(pre_master_secret)
+
+            print("Client: TLS 1.2 handshake completed successfully!")
             return True
 
         except Exception as e:
             print(f"Client: Handshake failed: {str(e)}")
             self.symmetric_key = None
             raise ConnectionError(f"Handshake failed: {str(e)}")
-
     def _generate_key_pairs(self):
         """Generate X25519 and ECDSA key pairs for the handshake."""
         self.private_key, self.public_key = KeyExchange.generate_key_pair()
@@ -151,32 +169,25 @@ class ChatClient:
 
     def _prepare_key_bytes(self):
         """Prepare the serialized key bytes for transmission."""
-        public_key_bytes = self.public_key.public_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PublicFormat.Raw
-        )
         signing_public_bytes = self.signing_public.public_bytes(
             encoding=serialization.Encoding.DER,
             format=PublicFormat.SubjectPublicKeyInfo
         )
-        return public_key_bytes, signing_public_bytes
+        return signing_public_bytes
 
-    def _create_client_hello_signature(self, public_key_bytes, timestamp, username):
+    def _create_client_hello_signature(self, timestamp, username):
         """Create the signature for the ClientHello message."""
+        # Note: We no longer include public_key_bytes since we're using RSA now
         return DigitalSignature.sign_message(
-            public_key_bytes.hex(),
+            "",  # Empty message or some protocol identifier
             self.signing_private,
             "",
             timestamp,
             username
         )
 
-    def _send_client_hello(self, public_key_bytes, signing_public_bytes, timestamp, signature, username):
+    def _send_client_hello(self, signing_public_bytes, timestamp, signature, username):
         """Send the ClientHello message to the server."""
-        # Send public key
-        self.client_socket.send(len(public_key_bytes).to_bytes(4, 'big'))
-        self.client_socket.send(public_key_bytes)
-
         # Send signing public key
         self.client_socket.send(len(signing_public_bytes).to_bytes(4, 'big'))
         self.client_socket.send(signing_public_bytes)
@@ -189,13 +200,15 @@ class ChatClient:
         self.client_socket.send(len(username_bytes).to_bytes(4, 'big'))
         self.client_socket.send(username_bytes)
 
-
     def _receive_server_certificate(self):
         """Receive and parse the server's certificate."""
+        print("Client: Waiting for certificate length")
         cert_len = int.from_bytes(self.client_socket.recv(4), 'big')
+        print(f"Client: Receiving certificate data ({cert_len} bytes)")
         cert_data = self._receive_full_data(cert_len)
 
         # Parse certificate
+        print("Client: Parsing certificate")
         certificate = x509.load_pem_x509_certificate(cert_data, default_backend())
         return certificate
 
@@ -226,21 +239,26 @@ class ChatClient:
 
     def _receive_server_signature(self):
         """Receive the server's signature."""
+        print("Client: Waiting for server signature length")
         server_sig_len = int.from_bytes(self.client_socket.recv(4), 'big')
+        print(f"Client: Receiving server signature ({server_sig_len} bytes)")
         server_signature = self.client_socket.recv(server_sig_len)
         return server_signature
 
-    def _verify_server_signature(self, server_public_key_bytes, server_signature, server_signing_public, timestamp):
+    def _verify_server_signature(self, server_signature, server_signing_public, timestamp):
         """Verify the server's signature."""
+        print("Client: Verifying server signature")
         if not DigitalSignature.verify_message(
-                server_public_key_bytes.hex(),
+                "",  # Empty message since we're not verifying public key bytes anymore
                 server_signature,
                 server_signing_public,
                 "",
                 timestamp,
                 "server"
         ):
+            print("Client: Server signature verification FAILED")
             raise ConnectionError("Invalid server signature")
+        print("Client: Server signature verified successfully")
 
     def _verify_certificate_signature(self, certificate, public_key_bytes, server_public_key_bytes):
         """Verify the certificate signature from the server."""
@@ -258,14 +276,10 @@ class ChatClient:
             hashes.SHA256()
         )
 
-    def _derive_symmetric_key(self, server_public_key_bytes):
-        """Derive the shared symmetric key."""
-        # Generate shared secret
-        server_public_key = KeyExchange.deserialize_public_key(server_public_key_bytes)
-        shared_secret = KeyExchange.generate_shared_secret(self.private_key, server_public_key)
-
+    def _derive_symmetric_key(self, pre_master_secret):
+        """Derive the symmetric key from the pre-master secret."""
         # Derive final symmetric key
-        self.symmetric_key = KeyDerivation.derive_symmetric_key(shared_secret)
+        self.symmetric_key = KeyDerivation.derive_symmetric_key(pre_master_secret)
 
         if not isinstance(self.symmetric_key, bytes) or len(self.symmetric_key) != 32:
             raise ValueError(f"Invalid symmetric key generated: {len(self.symmetric_key)} bytes")
@@ -289,3 +303,22 @@ class ChatClient:
         except Exception as e:
 
             raise Exception(f"Encryption failed: {str(e)}")
+
+    def _extract_public_key_from_certificate(self, certificate):
+        """Extract the RSA public key from the server's certificate."""
+        return certificate.public_key()
+
+    def _receive_server_signing_key(self):
+        """Receive the server's signing public key."""
+        print("Client: Waiting for server signing key length")
+        server_signing_key_len = int.from_bytes(self.client_socket.recv(4), 'big')
+        print(f"Client: Receiving server signing key ({server_signing_key_len} bytes)")
+        server_signing_public_bytes = self.client_socket.recv(server_signing_key_len)
+        print("Client: Deserializing server signing key")
+        server_signing_public = DigitalSignature.deserialize_public_key(server_signing_public_bytes)
+        return server_signing_public
+
+    def _send_encrypted_pre_master_secret(self, encrypted_secret):
+        """Send the encrypted pre-master secret to the server."""
+        self.client_socket.send(len(encrypted_secret).to_bytes(4, 'big'))
+        self.client_socket.send(encrypted_secret)

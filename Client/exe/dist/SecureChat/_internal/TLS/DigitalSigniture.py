@@ -10,7 +10,7 @@ from cryptography.hazmat.backends import default_backend
 class DigitalSignature:
     """Handles ECDSA signature generation and verification using P-256 curve with fixed-length blocks."""
 
-    BLOCK_SIZE = 256
+    BLOCK_SIZE = 32
     TIMESTAMP_TOLERANCE = 5
 
     @staticmethod
@@ -25,13 +25,8 @@ class DigitalSignature:
             'username': username,
             'message': message
         }
-        print("\nDigital Signature Data:")
-        print(f"Timestamp: {timestamp}")
-        print(f"Username: {username}")
-        print(f"Message: {message}")
 
         serialized_data = json.dumps(app_data).encode()
-        print(f"Serialized Data: {serialized_data.decode()}\n")
         digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
         z_prev = b''
 
@@ -47,17 +42,10 @@ class DigitalSignature:
 
     @staticmethod
     def verify_message(message, signature, public_key, ip, timestamp, username):
-        print("\nVerifying Digital Signature:")
-        print(f"Timestamp: {timestamp}")
-        print(f"Username: {username}")
-        print(f"Message: {message}")
-
         # Add timestamp verification with tolerance
         current_time = int(time.time())
         time_diff = abs(current_time - timestamp)
         if time_diff > DigitalSignature.TIMESTAMP_TOLERANCE:
-            print(f"Timestamp difference too large: {time_diff} seconds")
-            print(f"Current time: {current_time}, Message timestamp: {timestamp}")
             return False
 
         app_data = {
@@ -68,7 +56,6 @@ class DigitalSignature:
 
         try:
             serialized_data = json.dumps(app_data).encode()
-            print(f"Serialized Data: {serialized_data.decode()}")
 
             digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
             z_prev = b''

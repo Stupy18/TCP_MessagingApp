@@ -35,6 +35,12 @@ class OpenSSLCertHandler:
         except Exception as e:
             raise Exception(f"Failed to load certificate or key: {str(e)}")
 
+    def get_private_key(self):
+        """Get the private key from the loaded certificate."""
+        if not self.private_key:
+            raise Exception("Private key not loaded")
+        return self.private_key
+
     def sign_data(self, data):
         """Sign data using the private key"""
         if not self.private_key:

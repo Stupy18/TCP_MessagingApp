@@ -14,6 +14,7 @@ import json
 from datetime import datetime
 
 from TLS.OpenSSlCertHandler import OpenSSLCertHandler
+from TLS.RSAKeyExchange import RSAKeyExchange
 
 
 class ModernServerGUI:
@@ -25,6 +26,9 @@ class ModernServerGUI:
         self.rooms = {}
         self.is_running = False
         self.ecdsa_private_key, self.ecdsa_public_key = DigitalSignature.generate_keypair()
+
+        print("Server: Generating RSA key pair during initialization")
+        self.rsa_private_key, self.rsa_public_key = RSAKeyExchange.generate_key_pair()
 
         # Main window setup
         self.root = tk.Tk()
@@ -335,7 +339,7 @@ class ModernServerGUI:
 
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.bind((self.host, self.port))
-            self.server_socket.listen(50)
+            self.server_socket.listen(500)
 
             self.is_running = True
             self.stats["start_time"] = datetime.now()
@@ -594,59 +598,74 @@ class ModernServerGUI:
 
     def perform_key_exchange(self, client_socket):
         try:
-            print("Server: Starting TLS 1.3 handshake")
+            print("Server: Starting TLS 1.2 handshake")
 
-            # Initialize cryptographic server materials
+            # Step 1: Initialize cryptographic server materials
+            print("Server: Initializing server materials")
             ssl_handler = self._initialize_server_materials()
+            # Get the certificate's private key
+            cert_private_key = ssl_handler.get_private_key()
 
-            # Process ClientHello
+            # Step 2: Process ClientHello
+            print("Server: Waiting for ClientHello")
             client_data = self._receive_client_hello(client_socket)
-            client_public_key_bytes = client_data["public_key_bytes"]
             client_signing_public = client_data["signing_public"]
             client_timestamp = client_data["timestamp"]
             username = client_data["username"]
+            print(f"Server: Received ClientHello from {username}")
 
             # Verify client signature
+            print("Server: Verifying client signature")
             self._verify_client_signature(
-                client_public_key_bytes,
                 client_data["signature"],
                 client_signing_public,
                 client_timestamp,
                 username
             )
+            print("Server: Client signature verified")
 
-            # Prepare and send ServerHello
-            client_public_key = KeyExchange.deserialize_public_key(client_public_key_bytes)
+            # Step 3: Send ServerHello with certificate and signature
+            print("Server: Preparing server materials")
             server_data = self._prepare_server_materials(client_timestamp)
-            server_public_bytes = server_data["public_bytes"]
 
-            # Create signatures
-            signatures = self._create_server_signatures(
-                server_public_bytes,
-                client_public_key_bytes,
+            # Create signature
+            print("Server: Creating server signature")
+            signature = self._create_server_signature(
                 client_timestamp,
                 server_data["signing_private"],
-                ssl_handler
             )
 
             # Send ServerHello
+            print("Server: Sending ServerHello")
             self._send_server_hello(
                 client_socket,
                 ssl_handler,
-                server_public_bytes,
                 server_data["signing_public_bytes"],
-                signatures
+                signature
+            )
+
+            # Step 4: Receive encrypted pre-master secret from client
+            print("Server: Waiting for encrypted pre-master secret")
+            encrypted_pre_master_secret = self._receive_encrypted_pre_master_secret(client_socket)
+            print(f"Server: Received encrypted pre-master secret ({len(encrypted_pre_master_secret)} bytes)")
+
+            # Decrypt pre-master secret and derive symmetric key
+            print("Server: Decrypting pre-master secret")
+            pre_master_secret = RSAKeyExchange.decrypt_pre_master_secret(
+                cert_private_key,  # Use the certificate's private key
+                encrypted_pre_master_secret
             )
 
             # Derive symmetric key
-            symmetric_key = self._derive_symmetric_key(server_data["private_key"], client_public_key)
+            print("Server: Deriving symmetric key")
+            symmetric_key = KeyDerivation.derive_symmetric_key(pre_master_secret)
 
+            print("Server: TLS 1.2 handshake completed successfully")
             return symmetric_key
 
         except Exception as e:
             print(f"Server: Key exchange failed: {str(e)}")
             raise ConnectionError(f"Key exchange failed: {str(e)}")
-
     def _initialize_server_materials(self):
         """Initialize SSL handler and generate key pairs."""
         ssl_handler = OpenSSLCertHandler("E:/swords and sandals/OpenSSL/keys/server.crt",
@@ -658,43 +677,45 @@ class ModernServerGUI:
 
     def _receive_client_hello(self, client_socket):
         """Receive and parse the ClientHello message."""
-        # Receive client's public key
-        public_key_len = int.from_bytes(client_socket.recv(4), 'big')
-        client_public_key_bytes = client_socket.recv(public_key_len)
-
+        print("Server: Waiting for client public key length")
         # Receive client's signing public key
         signing_key_len = int.from_bytes(client_socket.recv(4), 'big')
+        print(f"Server: Receiving client signing key ({signing_key_len} bytes)")
         client_signing_public_bytes = client_socket.recv(signing_key_len)
 
         # Receive timestamp from ClientHello
+        print("Server: Receiving timestamp")
         client_timestamp = int.from_bytes(client_socket.recv(8), 'big')
 
         # Receive client's signature
+        print("Server: Waiting for client signature length")
         signature_len = int.from_bytes(client_socket.recv(4), 'big')
+        print(f"Server: Receiving client signature ({signature_len} bytes)")
         client_signature = client_socket.recv(signature_len)
 
         # Receive username
+        print("Server: Waiting for username length")
         username_len = int.from_bytes(client_socket.recv(4), 'big')
+        print(f"Server: Receiving username ({username_len} bytes)")
         username = client_socket.recv(username_len).decode('utf-8')
 
-        print("Server: Received ClientHello with key share")
+        print(f"Server: Received ClientHello from {username}")
 
         # Parse client's signing public key
+        print("Server: Deserializing client signing key")
         client_signing_public = DigitalSignature.deserialize_public_key(client_signing_public_bytes)
 
         return {
-            "public_key_bytes": client_public_key_bytes,
             "signing_public": client_signing_public,
             "timestamp": client_timestamp,
             "signature": client_signature,
             "username": username
         }
 
-    def _verify_client_signature(self, client_public_key_bytes, client_signature,
-                                 client_signing_public, client_timestamp, username):
+    def _verify_client_signature(self, client_signature, client_signing_public, client_timestamp, username):
         """Verify the client's signature."""
         if not DigitalSignature.verify_message(
-                client_public_key_bytes.hex(),
+                "",  # Empty message since we're not verifying public key bytes anymore
                 client_signature,
                 client_signing_public,
                 "",
@@ -747,33 +768,34 @@ class ModernServerGUI:
             "openssl_signature": openssl_signature
         }
 
-    def _send_server_hello(self, client_socket, ssl_handler, server_public_bytes,
-                           server_signing_public_bytes, signatures):
+    def _send_server_hello(self, client_socket, ssl_handler, server_signing_public_bytes, signature):
         """Send the ServerHello message to the client."""
         # Send certificate
+        print("Server: Getting certificate data")
         cert_data = ssl_handler.get_certificate_data()
+        print(f"Server: Sending certificate ({len(cert_data)} bytes)")
         client_socket.send(len(cert_data).to_bytes(4, 'big'))
         client_socket.send(cert_data)
 
-        # Send server public key
-        client_socket.send(len(server_public_bytes).to_bytes(4, 'big'))
-        client_socket.send(server_public_bytes)
-
         # Send server signing public key
+        print(f"Server: Sending server signing key ({len(server_signing_public_bytes)} bytes)")
         client_socket.send(len(server_signing_public_bytes).to_bytes(4, 'big'))
         client_socket.send(server_signing_public_bytes)
 
         # Send server signature
-        server_signature = signatures["server_signature"]
-        client_socket.send(len(server_signature).to_bytes(4, 'big'))
-        client_socket.send(server_signature)
+        print(f"Server: Sending server signature ({len(signature)} bytes)")
+        client_socket.send(len(signature).to_bytes(4, 'big'))
+        client_socket.send(signature)
 
-        # Send OpenSSL signature
-        openssl_signature = signatures["openssl_signature"]
-        client_socket.send(len(openssl_signature).to_bytes(4, 'big'))
-        client_socket.send(openssl_signature)
+        print("Server: ServerHello sent successfully")
 
-        print("Server: Sent ServerHello with key share")
+    def _receive_encrypted_pre_master_secret(self, client_socket):
+        """Receive the encrypted pre-master secret from the client."""
+        print("Server: Waiting for pre-master secret length")
+        secret_len = int.from_bytes(client_socket.recv(4), 'big')
+        print(f"Server: Receiving encrypted pre-master secret ({secret_len} bytes)")
+        encrypted_secret = client_socket.recv(secret_len)
+        return encrypted_secret
 
     def _derive_symmetric_key(self, private_key, client_public_key):
         """Derive the shared symmetric key."""
@@ -860,6 +882,23 @@ class ModernServerGUI:
 
         # Start the main event loop
         self.root.mainloop()
+
+    def _receive_encrypted_pre_master_secret(self, client_socket):
+        """Receive the encrypted pre-master secret from the client."""
+        secret_len = int.from_bytes(client_socket.recv(4), 'big')
+        encrypted_secret = client_socket.recv(secret_len)
+        return encrypted_secret
+
+    def _create_server_signature(self, timestamp, signing_private):
+        """Create the signature for the ServerHello message."""
+        return DigitalSignature.sign_message(
+            "",  # Empty message for TLS 1.2
+            signing_private,
+            "",
+            timestamp,
+            "server"
+        )
+
 
 
 if __name__ == "__main__":

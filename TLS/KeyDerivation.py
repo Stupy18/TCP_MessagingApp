@@ -6,25 +6,25 @@ class KeyDerivation:
     """Handles symmetric key derivation using HKDF."""
 
     @staticmethod
-    def derive_symmetric_key(shared_secret):
+    def derive_symmetric_key(pre_master_secret):
         """
-        Derives a symmetric key from a shared secret.
+        Derives a symmetric key from a pre-master secret using TLS 1.2 style PRF.
         Returns a 32-byte key suitable for AES-256.
         """
         try:
-            # Convert shared_secret to bytes if it isn't already
-            if not isinstance(shared_secret, bytes):
-                shared_secret = bytes(shared_secret)
+            # Convert pre_master_secret to bytes if it isn't already
+            if not isinstance(pre_master_secret, bytes):
+                pre_master_secret = bytes(pre_master_secret)
 
             hkdf = HKDF(
                 algorithm=SHA256(),
                 length=32,  # AES-256 key size
                 salt=None,  # No salt for deterministic output
-                info=b'handshake data',
+                info=b'tls12 handshake data',
                 backend=default_backend()
             )
 
-            derived_key = hkdf.derive(shared_secret)
+            derived_key = hkdf.derive(pre_master_secret)
 
             if not isinstance(derived_key, bytes):
                 derived_key = bytes(derived_key)
