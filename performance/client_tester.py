@@ -35,14 +35,14 @@ except ImportError as e:
 SERVER_IP = "188.24.92.229"  # Change this to your server's IP address
 SERVER_PORT = 8080  # Chat server port
 MONITOR_PORT = 8888  # Server monitor communication port
-NUM_CLIENTS = 10  # Using fewer clients for more controlled testing
+NUM_CLIENTS = 30  # Using fewer clients for more controlled testing
 TEST_DURATION = 60  # seconds
 ROOM_NAME = "message_test_room"  # All clients will join the same room
 TLS_VERSION = "TLS 1.3"  # Default version
 
 # Message size configuration
-MESSAGE_SIZES = [10, 100, 500, 1000, 5000, 10000, 50000]  # In bytes/characters
-MESSAGES_PER_SIZE = 20  # Number of messages to send for each size
+MESSAGE_SIZES = [10, 100, 500, 1000, 2500, 5000, 7500, 10000, 25000, 50000]  # In bytes/characters
+MESSAGES_PER_SIZE = 30  # Number of messages to send for each size
 
 # Results storage
 connection_times = []
@@ -241,16 +241,15 @@ def run_test():
     start_time = time.time()
 
     for i in range(NUM_CLIENTS):
-        # Stagger client starts to prevent connection flood
-        time.sleep(1)  # 1 second between clients
+        # More sophisticated staggering to prevent connection floods
+        stagger_time = 0.5 + (random.random() * 0.5)  # 0.5-1.0 seconds between clients
+        time.sleep(stagger_time)
 
         thread = threading.Thread(target=client_task, args=(i,))
         thread.daemon = True
         thread.start()
         client_threads.append(thread)
-        print(f"Started client {i}")
-
-    print(f"\nAll {NUM_CLIENTS} clients started. Test in progress...")
+        print(f"Started client {i} (stagger: {stagger_time:.2f}s)")
 
     # Wait for all clients to finish
     for i, thread in enumerate(client_threads):
