@@ -462,7 +462,8 @@ class ModernServerGUI:
             self.stats["total_connections"] += 1
             self.stats["active_connections"] += 1
 
-            symmetric_key = self.perform_key_exchange(client_socket)
+            # Pass client address to the key exchange function
+            symmetric_key = self.perform_key_exchange(client_socket, client_address)
 
             self.clients[client_socket] = {
                 "address": client_address,
@@ -494,7 +495,6 @@ class ModernServerGUI:
 
                 except Exception as e:
                     self.update_text_widget(f"Error with client {ip}:{port}: {str(e)}\n")
-
                     break
 
         finally:
@@ -592,9 +592,10 @@ class ModernServerGUI:
 
             self.update_text_widget(f"Error in broadcast: {str(e)}\n")
 
-    def perform_key_exchange(self, client_socket):
+    def perform_key_exchange(self, client_socket, client_address=None):
         try:
             print("Server: Starting TLS 1.3 handshake")
+            client_ip = client_address[0] if client_address else ""
 
             # Initialize cryptographic server materials
             ssl_handler = self._initialize_server_materials()
@@ -606,13 +607,14 @@ class ModernServerGUI:
             client_timestamp = client_data["timestamp"]
             username = client_data["username"]
 
-            # Verify client signature
+            # Verify client signature - now including IP
             self._verify_client_signature(
                 client_public_key_bytes,
                 client_data["signature"],
                 client_signing_public,
                 client_timestamp,
-                username
+                username,
+                client_ip
             )
 
             # Prepare and send ServerHello
@@ -620,13 +622,14 @@ class ModernServerGUI:
             server_data = self._prepare_server_materials(client_timestamp)
             server_public_bytes = server_data["public_bytes"]
 
-            # Create signatures
+            # Create signatures - now including client IP
             signatures = self._create_server_signatures(
                 server_public_bytes,
                 client_public_key_bytes,
                 client_timestamp,
                 server_data["signing_private"],
-                ssl_handler
+                ssl_handler,
+                client_ip
             )
 
             # Send ServerHello
@@ -691,9 +694,36 @@ class ModernServerGUI:
         }
 
     def _verify_client_signature(self, client_public_key_bytes, client_signature,
-                                 client_signing_public, client_timestamp, username):
+                                 client_signing_public, client_timestamp, username, client_ip=""):
         """Verify the client's signature."""
-        if not DigitalSignature.verify_message(
+        # First try with the provided IP
+        if DigitalSignature.verify_message(
+                client_public_key_bytes.hex(),
+                client_signature,
+                client_signing_public,
+                client_ip,
+                client_timestamp,
+                username
+        ):
+            print(f"Server: Verified client signature with IP: {client_ip}")
+            return True
+
+        # Next try with localhost/127.0.0.1 if the client IP seems to be a local IP
+        if client_ip in ["127.0.0.1", "localhost"] or client_ip.startswith("192.168.") or client_ip.startswith("10."):
+            for test_ip in ["127.0.0.1", "localhost", "", "0.0.0.0"]:
+                if DigitalSignature.verify_message(
+                        client_public_key_bytes.hex(),
+                        client_signature,
+                        client_signing_public,
+                        test_ip,
+                        client_timestamp,
+                        username
+                ):
+                    print(f"Server: Verified client signature with alternative local IP: {test_ip}")
+                    return True
+
+        # Finally, try with empty IP as a last resort
+        if DigitalSignature.verify_message(
                 client_public_key_bytes.hex(),
                 client_signature,
                 client_signing_public,
@@ -701,9 +731,10 @@ class ModernServerGUI:
                 client_timestamp,
                 username
         ):
-            raise ConnectionError("Invalid client signature")
+            print("Server: Verified client signature with empty IP")
+            return True
 
-        print("Server: Verified client signature")
+        raise ConnectionError("Invalid client signature")
 
     def _prepare_server_materials(self, client_timestamp):
         """Prepare the server's key material for ServerHello."""
@@ -727,13 +758,13 @@ class ModernServerGUI:
         }
 
     def _create_server_signatures(self, server_public_bytes, client_public_key_bytes,
-                                  timestamp, signing_private, ssl_handler):
+                                  timestamp, signing_private, ssl_handler, client_ip=""):
         """Create the signatures for the ServerHello message."""
-        # Create server signature
+        # Create server signature with client IP
         server_signature = DigitalSignature.sign_message(
             server_public_bytes.hex(),
             signing_private,
-            "",
+            client_ip,  # Now including client IP
             timestamp,
             "server"
         )

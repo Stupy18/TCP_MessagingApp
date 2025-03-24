@@ -130,8 +130,17 @@ class ChatClient:
             server_public_key_bytes, server_signing_public = self._receive_server_key_material()
             server_signature = self._receive_server_signature()
 
+            # Get server IP from the socket
+            server_ip = self.client_socket.getpeername()[0]
+
             # Verify server's response
-            self._verify_server_signature(server_public_key_bytes, server_signature, server_signing_public, timestamp)
+            self._verify_server_signature(
+                server_public_key_bytes,
+                server_signature,
+                server_signing_public,
+                timestamp,
+                server_ip
+            )
             self._verify_certificate_signature(certificate, public_key_bytes, server_public_key_bytes)
 
             # Derive keys
@@ -163,10 +172,13 @@ class ChatClient:
 
     def _create_client_hello_signature(self, public_key_bytes, timestamp, username):
         """Create the signature for the ClientHello message."""
+        # Get server IP from the socket
+        server_ip = self.client_socket.getpeername()[0]
+
         return DigitalSignature.sign_message(
             public_key_bytes.hex(),
             self.signing_private,
-            "",
+            server_ip,  # Include server IP
             timestamp,
             username
         )
@@ -230,9 +242,36 @@ class ChatClient:
         server_signature = self.client_socket.recv(server_sig_len)
         return server_signature
 
-    def _verify_server_signature(self, server_public_key_bytes, server_signature, server_signing_public, timestamp):
+    def _verify_server_signature(self, server_public_key_bytes, server_signature,
+                                 server_signing_public, timestamp, server_ip=""):
         """Verify the server's signature."""
-        if not DigitalSignature.verify_message(
+        # First try with the provided server IP
+        if DigitalSignature.verify_message(
+                server_public_key_bytes.hex(),
+                server_signature,
+                server_signing_public,
+                server_ip,
+                timestamp,
+                "server"
+        ):
+            return True
+
+        # If connecting to a local server, try common local IPs
+        if server_ip in ["127.0.0.1", "localhost"] or server_ip.startswith("192.168.") or server_ip.startswith("10."):
+            for test_ip in ["127.0.0.1", "localhost", "", "0.0.0.0"]:
+                if DigitalSignature.verify_message(
+                        server_public_key_bytes.hex(),
+                        server_signature,
+                        server_signing_public,
+                        test_ip,
+                        timestamp,
+                        "server"
+                ):
+                    print(f"Client: Verified server signature with alternative local IP: {test_ip}")
+                    return True
+
+        # Finally try with empty IP as fallback
+        if DigitalSignature.verify_message(
                 server_public_key_bytes.hex(),
                 server_signature,
                 server_signing_public,
@@ -240,8 +279,10 @@ class ChatClient:
                 timestamp,
                 "server"
         ):
-            raise ConnectionError("Invalid server signature")
+            print("Client: Verified server signature with empty IP fallback")
+            return True
 
+        raise ConnectionError("Invalid server signature")
     def _verify_certificate_signature(self, certificate, public_key_bytes, server_public_key_bytes):
         """Verify the certificate signature from the server."""
         openssl_sig_len = int.from_bytes(self.client_socket.recv(4), 'big')

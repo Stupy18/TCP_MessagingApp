@@ -1,3 +1,4 @@
+import json
 import threading
 import time
 import sys
@@ -34,58 +35,18 @@ except ImportError as e:
 SERVER_IP = "188.24.92.229"  # Change this to your server's IP address
 SERVER_PORT = 8080  # Chat server port
 MONITOR_PORT = 8888  # Server monitor communication port
-NUM_CLIENTS = 100  # Adjust based on your hardware capability
-MESSAGES_PER_CLIENT = 10
-MESSAGE_INTERVAL = 0.5  # seconds between messages
+NUM_CLIENTS = 10  # Using fewer clients for more controlled testing
 TEST_DURATION = 60  # seconds
-ROOM_NAMES = ["general", "random", "tech", "news", "games"]
+ROOM_NAME = "message_test_room"  # All clients will join the same room
 TLS_VERSION = "TLS 1.3"  # Default version
+
+# Message size configuration
+MESSAGE_SIZES = [10, 100, 500, 1000, 5000, 10000, 50000]  # In bytes/characters
+MESSAGES_PER_SIZE = 20  # Number of messages to send for each size
 
 # Results storage
 connection_times = []
-message_times = []
-
-
-def client_task(client_id):
-    """Simulate a client connecting and sending messages"""
-    try:
-        # Create client
-        client = ChatClient()
-        username = f"test_user_{client_id}"
-
-        # Connect and record time
-        start_time = time.time()
-        success, message = client.connect_to_server(SERVER_IP, SERVER_PORT, username)
-        connection_time = time.time() - start_time
-        connection_times.append(connection_time)
-
-        if not success:
-            print(f"Client {client_id} failed to connect: {message}")
-            return
-
-        # Join a random room
-        room_name = random.choice(ROOM_NAMES)
-        client.join_room(room_name)
-
-        # Send messages with random intervals
-        for i in range(MESSAGES_PER_CLIENT):
-            # Random delay between messages
-            time.sleep(random.uniform(0.1, MESSAGE_INTERVAL * 2))
-
-            message = f"Test message {i} from client {client_id} at {time.time()}"
-
-            start_time = time.time()
-            success, _ = client.send_message(message)
-            if success:
-                message_time = time.time() - start_time
-                message_times.append(message_time)
-
-        # Wait before disconnecting (some clients stay longer)
-        time.sleep(random.uniform(1, 10))
-        client.disconnect()
-
-    except Exception as e:
-        print(f"Error in client {client_id}: {str(e)}")
+message_times = {}  # Dictionary to store timing by message size
 
 
 def send_monitor_command(command):
@@ -102,74 +63,151 @@ def send_monitor_command(command):
         return None
 
 
+def client_task(client_id):
+    """Simulate a client connecting and sending messages of varying sizes"""
+    try:
+        # Create client
+        client = ChatClient()
+        username = f"test_user_{client_id}"
+
+        # Connect and record time
+        start_time = time.time()
+        success, message = client.connect_to_server(SERVER_IP, SERVER_PORT, username)
+        connection_time = time.time() - start_time
+        connection_times.append(connection_time)
+
+        if not success:
+            print(f"Client {client_id} failed to connect: {message}")
+            return
+
+        # Join test room
+        client.join_room(ROOM_NAME)
+
+        # Test each message size
+        for size in MESSAGE_SIZES:
+            # Initialize storage for this size if not already done
+            if size not in message_times:
+                message_times[size] = []
+
+            # Generate a random message of the specified size
+            # Using a mix of letters for more realistic message content
+            message_content = ''.join(random.choice('abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ')
+                                      for _ in range(size))
+
+            for i in range(MESSAGES_PER_SIZE // NUM_CLIENTS):
+                # Add a small delay between messages to prevent congestion
+                time.sleep(random.uniform(0.1, 0.5))
+
+                test_message = f"SIZE:{size}:{message_content}"
+
+                start_time = time.time()
+                success, _ = client.send_message(test_message)
+                if success:
+                    message_time = time.time() - start_time
+                    message_times[size].append(message_time)
+                    print(f"Client {client_id} sent message of size {size}, time: {message_time:.6f}s")
+                else:
+                    print(f"Client {client_id} failed to send message of size {size}")
+
+        # Disconnect when done
+        client.disconnect()
+        print(f"Client {client_id} completed all tests and disconnected")
+
+    except Exception as e:
+        print(f"Error in client {client_id}: {str(e)}")
+
+
 def generate_report():
-    """Generate and save performance report"""
+    """Generate and save performance report for message size testing"""
     if not os.path.exists("results"):
         os.makedirs("results")
 
     # Calculate statistics
     avg_connection_time = statistics.mean(connection_times) if connection_times else 0
-    avg_message_time = statistics.mean(message_times) if message_times else 0
+
+    # Message size statistics
+    size_stats = {}
+    for size, times in message_times.items():
+        if times:
+            size_stats[size] = {
+                "count": len(times),
+                "average": statistics.mean(times),
+                "median": statistics.median(times),
+                "min": min(times),
+                "max": max(times),
+                "stdev": statistics.stdev(times) if len(times) > 1 else 0
+            }
 
     # Timestamp for the report
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     version_str = TLS_VERSION.replace(".", "_")
 
     # Print results
-    print(f"\n--- {TLS_VERSION} Client Performance Results ---")
+    print(f"\n--- {TLS_VERSION} Message Size Performance Results ---")
     print(f"Number of clients: {NUM_CLIENTS}")
-    print(f"Messages per client: {MESSAGES_PER_CLIENT}")
-    print(f"Total messages sent: {len(message_times)}")
     print(f"Average connection time: {avg_connection_time:.4f} seconds")
-    print(f"Average message sending time: {avg_message_time:.4f} seconds")
 
-    # Create charts
-    plt.figure(figsize=(15, 10))
+    for size in sorted(size_stats.keys()):
+        stat = size_stats[size]
+        print(f"\nMessage size: {size} bytes/chars")
+        print(f"  Message count: {stat['count']}")
+        print(f"  Average send time: {stat['average']:.6f} seconds")
+        print(f"  Median send time: {stat['median']:.6f} seconds")
+        print(f"  Min/Max send time: {stat['min']:.6f} / {stat['max']:.6f} seconds")
+        print(f"  Standard deviation: {stat['stdev']:.6f} seconds")
 
-    # Connection time histogram
-    plt.subplot(2, 1, 1)
-    plt.hist(connection_times, bins=20, alpha=0.7, color='blue')
-    plt.title(f'{TLS_VERSION} Connection Times')
-    plt.xlabel('Seconds')
-    plt.ylabel('Frequency')
+    # Create charts - Line chart of average time by message size
+    plt.figure(figsize=(12, 8))
+
+    sizes = sorted(size_stats.keys())
+    avg_times = [size_stats[size]["average"] for size in sizes]
+
+    plt.plot(sizes, avg_times, 'o-', linewidth=2, markersize=8)
+    plt.title(f'{TLS_VERSION} Message Send Times by Size')
+    plt.xlabel('Message Size (bytes/chars)')
+    plt.ylabel('Average Send Time (seconds)')
     plt.grid(True, linestyle='--', alpha=0.7)
+    plt.xscale('log')  # Use log scale for better visualization across sizes
 
-    # Message time histogram
-    plt.subplot(2, 1, 2)
-    plt.hist(message_times, bins=20, alpha=0.7, color='green')
-    plt.title(f'{TLS_VERSION} Message Send Times')
-    plt.xlabel('Seconds')
-    plt.ylabel('Frequency')
+    plt.tight_layout()
+    plt.savefig(f"results/{version_str}_message_size_performance_{timestamp}.png")
+
+    # Create a second chart - Box plot of time distribution by message size
+    plt.figure(figsize=(14, 8))
+
+    # Prepare data for box plot
+    box_data = [message_times[size] for size in sorted(message_times.keys())]
+
+    plt.boxplot(box_data, labels=[str(size) for size in sorted(message_times.keys())])
+    plt.title(f'{TLS_VERSION} Message Send Time Distribution by Size')
+    plt.xlabel('Message Size (bytes/chars)')
+    plt.ylabel('Send Time (seconds)')
     plt.grid(True, linestyle='--', alpha=0.7)
 
     plt.tight_layout()
-    plt.savefig(f"results/{version_str}_client_performance_{timestamp}.png")
+    plt.savefig(f"results/{version_str}_message_size_boxplot_{timestamp}.png")
 
-    # Save raw data
-    with open(f"results/{version_str}_client_results_{timestamp}.txt", "w") as f:
-        f.write(f"Protocol: {TLS_VERSION}\n")
-        f.write(f"Test Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"Number of clients: {NUM_CLIENTS}\n")
-        f.write(f"Messages per client: {MESSAGES_PER_CLIENT}\n")
-        f.write(f"Total messages sent: {len(message_times)}\n")
-        f.write(f"Average connection time: {avg_connection_time:.4f} seconds\n")
-        f.write(f"Average message sending time: {avg_message_time:.4f} seconds\n")
+    # Save raw data as JSON for easy comparison later
+    with open(f"results/{version_str}_message_size_raw_data_{timestamp}.json", "w") as f:
+        json.dump({
+            "protocol": TLS_VERSION,
+            "test_date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "connection_stats": {
+                "count": len(connection_times),
+                "average": avg_connection_time
+            },
+            "message_stats": size_stats,
+            "raw_message_times": {str(k): v for k, v in message_times.items()}
+        }, f, indent=2)
 
-        f.write("\nConnection Times:\n")
-        for t in connection_times:
-            f.write(f"{t:.6f}\n")
-
-        f.write("\nMessage Times:\n")
-        for t in message_times:
-            f.write(f"{t:.6f}\n")
-
-    print(f"\nResults saved to results/{version_str}_client_results_{timestamp}.txt")
-    print(f"Charts saved to results/{version_str}_client_performance_{timestamp}.png")
+    print(f"\nResults saved to results/{version_str}_message_size_raw_data_{timestamp}.json")
+    print(f"Charts saved to results/{version_str}_message_size_performance_{timestamp}.png and")
+    print(f"results/{version_str}_message_size_boxplot_{timestamp}.png")
 
 
 def run_test():
-    """Main test function"""
-    global SERVER_IP, SERVER_PORT, NUM_CLIENTS, MESSAGES_PER_CLIENT, TEST_DURATION, TLS_VERSION
+    """Main test function for message size testing"""
+    global SERVER_IP, SERVER_PORT, NUM_CLIENTS, TLS_VERSION
 
     # Parse command line arguments
     if len(sys.argv) > 1:
@@ -185,16 +223,10 @@ def run_test():
     if len(sys.argv) > 4:
         NUM_CLIENTS = int(sys.argv[4])
 
-    if len(sys.argv) > 5:
-        MESSAGES_PER_CLIENT = int(sys.argv[5])
-
-    if len(sys.argv) > 6:
-        TEST_DURATION = int(sys.argv[6])
-
-    print(f"\nStarting performance test for {TLS_VERSION} with {NUM_CLIENTS} clients...")
+    print(f"\nStarting message size performance test for {TLS_VERSION} with {NUM_CLIENTS} clients...")
     print(f"Server: {SERVER_IP}:{SERVER_PORT}, Monitor: {SERVER_IP}:{MONITOR_PORT}")
-    print(f"Test duration: {TEST_DURATION} seconds")
-    print(f"Each client will send {MESSAGES_PER_CLIENT} messages")
+    print(f"Testing message sizes: {MESSAGE_SIZES} bytes/chars")
+    print(f"Messages per size: {MESSAGES_PER_SIZE}")
 
     # Tell the server to start monitoring
     print("Signaling server to start monitoring...")
@@ -210,40 +242,20 @@ def run_test():
 
     for i in range(NUM_CLIENTS):
         # Stagger client starts to prevent connection flood
-        if i > 0 and i % 10 == 0:
-            # Print progress every 10 clients
-            elapsed = time.time() - start_time
-            print(f"Started {i} clients in {elapsed:.2f} seconds...")
-            # Wait a bit longer every 10 clients
-            time.sleep(1)
-        else:
-            time.sleep(0.1)
+        time.sleep(1)  # 1 second between clients
 
         thread = threading.Thread(target=client_task, args=(i,))
         thread.daemon = True
         thread.start()
         client_threads.append(thread)
+        print(f"Started client {i}")
 
     print(f"\nAll {NUM_CLIENTS} clients started. Test in progress...")
 
-    # Wait for test to complete
-    test_end_time = time.time() + TEST_DURATION
-    while time.time() < test_end_time:
-        active = sum(1 for t in client_threads if t.is_alive())
-        remaining = int(test_end_time - time.time())
-        print(f"Active clients: {active}/{NUM_CLIENTS}. Time remaining: {remaining} seconds...")
-        time.sleep(5)
-
-    print("\nTest time completed. Waiting for remaining clients to finish...")
-
-    # Give a grace period for clients to finish
-    grace_start = time.time()
-    while time.time() - grace_start < 30:  # 30 seconds grace period
-        active = sum(1 for t in client_threads if t.is_alive())
-        if active == 0:
-            break
-        print(f"Waiting for {active} clients to finish...")
-        time.sleep(5)
+    # Wait for all clients to finish
+    for i, thread in enumerate(client_threads):
+        thread.join()
+        print(f"Client {i} finished")
 
     # Tell the server to stop monitoring
     print("Signaling server to stop monitoring...")
@@ -251,21 +263,20 @@ def run_test():
     if response != "STOPPED":
         print("Warning: Did not receive proper acknowledgment from server monitor")
 
-    print("\nPerformance test completed.")
+    print("\nMessage size performance test completed.")
 
-    # Generate client-side report
+    # Generate report
     generate_report()
 
 
 if __name__ == "__main__":
-    print("TLS Client Performance Tester")
-    print("=============================")
+    print("TLS Message Size Performance Tester")
+    print("===================================")
     print("This script will test the performance of your TLS chat server")
-    print("from the client perspective.")
+    print("with messages of different sizes.")
     print()
-    print(
-        "Usage: python client_tester.py [SERVER_IP] [SERVER_PORT] [TLS_VERSION] [NUM_CLIENTS] [MSGS_PER_CLIENT] [DURATION]")
-    print("Example: python client_tester.py 192.168.1.100 8080 tls13 100 10 120")
+    print("Usage: python message_size_tester.py [SERVER_IP] [SERVER_PORT] [TLS_VERSION] [NUM_CLIENTS]")
+    print("Example: python message_size_tester.py 192.168.1.100 8080 tls13 10")
     print()
 
     run_test()
