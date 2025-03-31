@@ -32,16 +32,16 @@ except ImportError as e:
         sys.exit(1)
 
 # Configuration
-SERVER_IP = "188.24.92.229"  # Change this to your server's IP address
+SERVER_IP = "127.0.0.1"  # Change this to your server's IP address
 SERVER_PORT = 8080  # Chat server port
 MONITOR_PORT = 8888  # Server monitor communication port
-NUM_CLIENTS = 10  # Using fewer clients for more controlled testing
+NUM_CLIENTS = 20  # Using fewer clients for more controlled testing
 TEST_DURATION = 60  # seconds
 ROOM_NAME = "message_test_room"  # All clients will join the same room
 TLS_VERSION = "TLS 1.2"  # Default version
 
 # Message size configuration
-MESSAGE_SIZES = [10, 100, 500, 1000, 2500, 5000, 7500, 10000, 25000, 50000]  # In bytes/characters
+MESSAGE_SIZES = [10, 100, 500, 1000, 2500, 5000, 7500, 10000, 25000, 50000,100000]  # In bytes/characters
 MESSAGES_PER_SIZE = 100  # Number of messages to send for each size
 
 # Results storage

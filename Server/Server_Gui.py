@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives import serialization
 from TLS.DigitalSigniture import DigitalSignature
 from TLS.KeyExchange import KeyExchange
 from TLS.KeyDerivation import KeyDerivation
-from TLS.AES_GCM_CYPHER import AESGCMCipher, send_encrypted_data, receive_encrypted_data
+from TLS.AES_CBC_CYPHER import AESCBCCipher, send_encrypted_data, receive_encrypted_data
 import json
 from datetime import datetime
 
@@ -481,7 +481,7 @@ class ModernServerGUI:
                 try:
                     encrypted_data = receive_encrypted_data(client_socket)
 
-                    decrypted_message = AESGCMCipher.decrypt(symmetric_key, encrypted_data)
+                    decrypted_message = AESCBCCipher.decrypt(symmetric_key, encrypted_data)
 
                     self.stats["total_messages"] += 1
 
@@ -565,7 +565,7 @@ class ModernServerGUI:
             for client_socket in self.rooms[room_name]:
                 try:
                     symmetric_key = self.clients[client_socket]["symmetric_key"]
-                    encrypted_message = AESGCMCipher.encrypt(symmetric_key, system_message)
+                    encrypted_message = AESCBCCipher.encrypt(symmetric_key, system_message)
                     send_encrypted_data(client_socket, encrypted_message)
                 except Exception as e:
                     self.update_text_widget(f"Error sending system message: {str(e)}\n")
@@ -587,7 +587,7 @@ class ModernServerGUI:
                     if client_socket != sender_socket:
                         try:
                             symmetric_key = self.clients[client_socket]["symmetric_key"]
-                            encrypted_message = AESGCMCipher.encrypt(symmetric_key, formatted_message)
+                            encrypted_message = AESCBCCipher.encrypt(symmetric_key, formatted_message)
                             send_encrypted_data(client_socket, encrypted_message)
                         except Exception as e:
 

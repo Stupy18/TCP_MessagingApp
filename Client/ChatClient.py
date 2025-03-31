@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives import hashes
 from TLS.DigitalSigniture import DigitalSignature
 from TLS.KeyExchange import KeyExchange
 from TLS.KeyDerivation import KeyDerivation
-from TLS.AES_GCM_CYPHER import AESGCMCipher, send_encrypted_data, receive_encrypted_data
+from TLS.AES_CBC_CYPHER import AESCBCCipher, send_encrypted_data, receive_encrypted_data
 from TLS.RSAKeyExchange import RSAKeyExchange
 
 
@@ -106,7 +106,7 @@ class ChatClient:
 
 
                 # Decrypt the data directly without base64 decoding
-                decrypted_message = AESGCMCipher.decrypt(self.symmetric_key, encrypted_data)
+                decrypted_message = AESCBCCipher.decrypt(self.symmetric_key, encrypted_data)
 
 
                 if self.message_callback:
@@ -297,7 +297,7 @@ class ChatClient:
                 raise ValueError(f"Invalid symmetric key length: {len(self.symmetric_key)} bytes")
 
 
-            encrypted_message = AESGCMCipher.encrypt(self.symmetric_key, message)
+            encrypted_message = AESCBCCipher.encrypt(self.symmetric_key, message)
             # Return the encrypted message directly without base64 encoding
             return encrypted_message
         except Exception as e:
