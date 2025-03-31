@@ -41,7 +41,7 @@ ROOM_NAME = "message_test_room"  # All clients will join the same room
 TLS_VERSION = "TLS 1.2"  # Default version
 
 # Message size configuration
-MESSAGE_SIZES = [10, 100, 500, 1000, 2500, 5000, 7500, 10000, 25000, 50000,100000]  # In bytes/characters
+MESSAGE_SIZES = [10, 100, 500, 1000, 2500, 5000, 7500, 10000, 25000, 50000, 100000, 200000]  # In bytes/characters
 MESSAGES_PER_SIZE = 100  # Number of messages to send for each size
 
 # Results storage
