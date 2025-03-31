@@ -35,7 +35,7 @@ except ImportError as e:
 SERVER_IP = "188.24.92.229"  # Change this to your server's IP address
 SERVER_PORT = 8080  # Chat server port
 MONITOR_PORT = 8888  # Server monitor communication port
-NUM_CLIENTS = 10  # Using fewer clients for more controlled testing
+NUM_CLIENTS = 20  # Using fewer clients for more controlled testing
 TEST_DURATION = 60  # seconds
 ROOM_NAME = "message_test_room"  # All clients will join the same room
 TLS_VERSION = "TLS 1.3"  # Default version
