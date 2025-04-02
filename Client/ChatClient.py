@@ -15,6 +15,7 @@ from TLS.DigitalSigniture import DigitalSignature
 from TLS.KeyExchange import KeyExchange
 from TLS.KeyDerivation import KeyDerivation
 from TLS.AES_GCM_CYPHER import AESGCMCipher, send_encrypted_data, receive_encrypted_data
+from TLS.RoomHasher import RoomHasher
 
 
 class ChatClient:
@@ -102,16 +103,24 @@ class ChatClient:
         try:
             while True:
                 encrypted_data = receive_encrypted_data(self.client_socket)
-
-
-                # Decrypt the data directly without base64 decoding
                 decrypted_message = AESGCMCipher.decrypt(self.symmetric_key, encrypted_data)
 
+                # Handle room key messages before anything else
+                if decrypted_message.startswith("/room_key "):
+                    parts = decrypted_message.split(" ", 2)
+                    if len(parts) == 3:
+                        _, room_name, key_data = parts
+                        success = RoomHasher.import_room_key(room_name, key_data)
+                        if success and self.message_callback:
+                            self.message_callback(f"Received encryption key for room: {room_name}")
+                        continue
 
+                # Handle regular messages
+                verified_message, room = self._extract_room_and_verify_message(decrypted_message)
                 if self.message_callback:
-                    self.message_callback(decrypted_message)
-        except Exception as e:
+                    self.message_callback(verified_message)
 
+        except Exception as e:
             return False, str(e)
 
     def perform_key_exchange(self, username):
@@ -330,3 +339,49 @@ class ChatClient:
         except Exception as e:
 
             raise Exception(f"Encryption failed: {str(e)}")
+
+    def _extract_room_and_verify_message(self, message):
+        """
+        Extracts the room from a message and verifies its room-specific hash
+        """
+        try:
+            # Handle messages without a pipe (not hashed)
+            if "|" not in message:
+                return message, None
+
+            # For messages with a hash
+            if message.startswith("[") and "]" in message:
+                room_end = message.find("]")
+                room_name = message[1:room_end].strip()
+
+                # Only try verification if we have the room key
+                if room_name in RoomHasher.room_keys:
+                    verified_message = RoomHasher.verify_and_extract_message(message, room_name)
+                    if verified_message:
+                        return verified_message, room_name
+
+                # If we don't have the key or verification fails, try to extract the original message
+                parts = message.split("|", 1)
+                if len(parts) == 2:
+                    return parts[0], room_name  # Return the message part without the hash
+
+            # For system messages that are hashed
+            elif message.startswith("[SYSTEM]") and "|" in message:
+                # Try all rooms the client is in
+                for room_name in self.rooms:
+                    if room_name in RoomHasher.room_keys:
+                        verified = RoomHasher.verify_and_extract_message(message, room_name)
+                        if verified:
+                            return verified, room_name
+
+                # If no verification, return just the message part
+                parts = message.split("|", 1)
+                if len(parts) == 2:
+                    return parts[0], None
+
+            # Default fallback - return the original message
+            return message, None
+
+        except Exception as e:
+            print(f"Error processing message hash: {str(e)}")
+            return message, None
