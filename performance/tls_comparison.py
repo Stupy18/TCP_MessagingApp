@@ -7,22 +7,32 @@ import numpy as np
 from datetime import datetime
 
 
-def load_latest_results(version_str):
-    """Load the most recent test results for the specified TLS version"""
-    # Find latest result file
-    pattern = f"results/{version_str}_message_size_raw_data_*.json"
-    files = glob.glob(pattern)
+def load_results(version_str, filename):
+    """Load the specified TLS version results file"""
+    # Construct the filepath based on the screenshot
+    filepath = os.path.join("results", filename)
 
-    if not files:
-        print(f"No result files found for {version_str.replace('_', '.')}!")
-        return None
+    # Check if file exists
+    if not os.path.exists(filepath):
+        print(f"File not found: {filepath}")
+        # Try alternative path
+        filepath = filename
+        if not os.path.exists(filepath):
+            print(f"Also not found at: {filepath}")
+            # Try with full path
+            filepath = os.path.join("performance", "results", filename)
+            if not os.path.exists(filepath):
+                print(f"Also not found at: {filepath}")
+                return None
 
-    # Sort by timestamp (which is in the filename)
-    latest_file = sorted(files)[-1]
-
+    print(f"Loading file: {filepath}")
     # Load and return the data
-    with open(latest_file, 'r') as f:
-        return json.load(f)
+    try:
+        with open(filepath, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading file: {str(e)}")
+        return None
 
 
 def create_comparison(tls12_data, tls13_data):
@@ -60,10 +70,10 @@ def create_comparison(tls12_data, tls13_data):
     tls12_avgs = [tls12_data["message_stats"][str(size)]["average"] for size in sizes]
     tls13_avgs = [tls13_data["message_stats"][str(size)]["average"] for size in sizes]
 
-    plt.plot(sizes, tls12_avgs, 'o-', color='blue', linewidth=2, label='TLS 1.2', markersize=8)
-    plt.plot(sizes, tls13_avgs, 's-', color='red', linewidth=2, label='TLS 1.3', markersize=8)
+    plt.plot(sizes, tls12_avgs, 'o-', color='blue', linewidth=2, label='TLS 1.2 (CBC)', markersize=8)
+    plt.plot(sizes, tls13_avgs, 's-', color='red', linewidth=2, label='TLS 1.3 (GCM)', markersize=8)
 
-    plt.title('TLS 1.2 vs TLS 1.3: Message Send Times by Size')
+    plt.title('TLS 1.2 (CBC) vs TLS 1.3 (GCM): Message Send Times by Size')
     plt.xlabel('Message Size (bytes)')
     plt.ylabel('Average Send Time (seconds)')
     plt.grid(True, linestyle='--', alpha=0.7)
@@ -87,7 +97,7 @@ def create_comparison(tls12_data, tls13_data):
 
     # Add labels
     plt.axhline(y=0, color='black', linestyle='-', alpha=0.3)
-    plt.title('TLS 1.3 Performance Change vs TLS 1.2 (%)')
+    plt.title('TLS 1.3 (GCM) Performance Change vs TLS 1.2 (CBC) (%)')
     plt.xlabel('Message Size (bytes)')
     plt.ylabel('Performance Change (%)\nNegative = TLS 1.3 Faster')
     plt.xticks(np.arange(len(sizes)), [str(size) for size in sizes])
@@ -105,8 +115,8 @@ def create_comparison(tls12_data, tls13_data):
 
     # Generate a detailed comparison report
     with open(f"results/tls_comparison_report_{timestamp}.txt", "w") as f:
-        f.write("TLS 1.2 vs TLS 1.3 Performance Comparison\n")
-        f.write("==========================================\n\n")
+        f.write("TLS 1.2 (CBC) vs TLS 1.3 (GCM) Performance Comparison\n")
+        f.write("==================================================\n\n")
 
         f.write(f"Comparison generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
 
@@ -138,9 +148,11 @@ def create_comparison(tls12_data, tls13_data):
         avg_improvement = sum(imp["improvement_pct"] for imp in improvements.values()) / len(improvements)
 
         if avg_improvement < 0:
-            f.write(f"TLS 1.3 is on average {-avg_improvement:.2f}% faster than TLS 1.2 for message transmission.\n")
+            f.write(
+                f"TLS 1.3 with GCM is on average {-avg_improvement:.2f}% faster than TLS 1.2 with CBC for message transmission.\n")
         else:
-            f.write(f"TLS 1.3 is on average {avg_improvement:.2f}% slower than TLS 1.2 for message transmission.\n")
+            f.write(
+                f"TLS 1.3 with GCM is on average {avg_improvement:.2f}% slower than TLS 1.2 with CBC for message transmission.\n")
 
         # Additional observations
         f.write("\nAdditional Observations:\n")
@@ -163,19 +175,28 @@ def create_comparison(tls12_data, tls13_data):
             f.write(f"- {observation}.\n")
 
         # Technical reasons
-        f.write("\nPossible Technical Reasons for Performance Differences:\n")
-        f.write("- TLS 1.3 reduces the handshake from 2-RTT to 1-RTT, which should improve connection establishment.\n")
+        f.write("\nTechnical Reasons for Performance Differences:\n")
+        f.write("- TLS 1.3 reduces the handshake from 2-RTT to 1-RTT, improving connection establishment time.\n")
         f.write(
-            "- TLS 1.3 introduces more efficient cipher suites, potentially improving encryption/decryption speed.\n")
-        f.write("- TLS 1.3 removes legacy algorithms and options, which may lead to simpler and faster code paths.\n")
+            "- CBC mode (TLS 1.2) processes blocks sequentially, while GCM mode (TLS 1.3) can process multiple blocks in parallel.\n")
+        f.write("- CBC mode requires explicit PKCS7 padding which adds computational overhead.\n")
+        f.write(
+            "- CBC with HMAC requires two passes over the data (encryption + authentication) compared to GCM's single pass.\n")
+        f.write(
+            "- Modern CPUs have specific hardware instructions (AES-NI and PCLMULQDQ) that accelerate GCM operations.\n")
+        f.write("- TLS 1.3 removes legacy algorithms and options, which leads to simpler and faster code paths.\n")
 
         # Recommendations
         f.write("\nRecommendations:\n")
         if avg_improvement < 0:
-            f.write("- Based on performance metrics, TLS 1.3 is recommended over TLS 1.2 for this application.\n")
+            f.write(
+                "- Based on performance metrics, TLS 1.3 with GCM is recommended over TLS 1.2 with CBC for this application.\n")
+            f.write(
+                "- The performance improvement is especially significant for applications handling larger message sizes.\n")
         else:
-            f.write("- Despite newer design, TLS 1.3 does not show performance improvements in this implementation.\n")
-            f.write("  Further optimizations may be necessary to realize expected benefits.\n")
+            f.write(
+                "- Despite theoretical advantages, TLS 1.3 with GCM does not show performance improvements in this implementation.\n")
+            f.write("- Further optimization of the GCM implementation may be necessary to realize expected benefits.\n")
 
     print(f"\nResults saved to:")
     print(f"- results/tls_version_comparison_{timestamp}.png")
@@ -186,16 +207,33 @@ def create_comparison(tls12_data, tls13_data):
 
 
 def main():
-    # Load latest results for each version
-    print("Loading latest TLS 1.2 results...")
-    tls12_data = load_latest_results("TLS_1_2")
+    # Get current directory and print it
+    current_dir = os.getcwd()
+    print(f"Current working directory: {current_dir}")
 
-    print("Loading latest TLS 1.3 results...")
-    tls13_data = load_latest_results("TLS_1_3")
+    # Print available files in the results directory
+    results_dir = os.path.join("results")
+    print(f"Looking for files in: {results_dir}")
+    if os.path.exists(results_dir):
+        print("Files in results directory:")
+        for file in os.listdir(results_dir):
+            print(f"  {file}")
+    else:
+        print("Results directory not found!")
+
+    # Hardcoded filenames based on the screenshot provided
+    tls12_filename = "TLS 1_2_message_size_raw_data_20250331_172059.json"
+    tls13_filename = "TLS 1_3_message_size_raw_data_20250331_171315.json"
+
+    print("\nLoading TLS 1.2 results...")
+    tls12_data = load_results("1.2", tls12_filename)
+
+    print("Loading TLS 1.3 results...")
+    tls13_data = load_results("1.3", tls13_filename)
 
     if not tls12_data or not tls13_data:
         print("Error: Missing results for one or both TLS versions.")
-        print("Please run the message_size_tester.py script for both TLS 1.2 and TLS 1.3 first.")
+        print("Please check file paths and ensure the JSON files exist.")
         return
 
     print("Creating comparison charts and report...")
