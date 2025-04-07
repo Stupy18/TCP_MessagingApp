@@ -144,7 +144,15 @@ class ChatServer:
                     elif decrypted_message.startswith("/leave "):
                         room_name = decrypted_message.split(" ", 1)[1].strip()
                         self.leave_room(client_socket, room_name)
+                    elif decrypted_message.startswith("/msg "):
+                        # New message format: "/msg room_name username: message"
+                        parts = decrypted_message.split(" ", 2)
+                        if len(parts) >= 3:
+                            room_name = parts[1]
+                            message_content = parts[2]
+                            self.broadcast_to_room(message_content, client_socket, room_name)
                     else:
+                        # Legacy support for old message format
                         self.broadcast(decrypted_message, client_socket)
 
                 except Exception as e:
@@ -153,6 +161,35 @@ class ChatServer:
 
         finally:
             self.disconnect_client(client_socket)
+
+    def broadcast_to_room(self, message, sender_socket, room_name):
+        try:
+            # Check if room exists and client is in it
+            if room_name not in self.rooms:
+                return
+
+            if sender_socket not in self.rooms[room_name]:
+                return
+
+            sender_ip, sender_port = self.clients[sender_socket]["address"]
+
+            # Create room-specific hash for the message
+            formatted_message = f"[{room_name}] {message}"
+            room_hashed_message = RoomHasher.hash_message(formatted_message, room_name)
+
+            self.log_message(f"Message in {room_name} from {sender_ip}:{sender_port}: {message}")
+
+            # Send to other clients in this room only
+            for client_socket in self.rooms[room_name]:
+                if client_socket != sender_socket:
+                    try:
+                        symmetric_key = self.clients[client_socket]["symmetric_key"]
+                        encrypted_message = AESGCMCipher.encrypt(symmetric_key, room_hashed_message)
+                        send_encrypted_data(client_socket, encrypted_message)
+                    except Exception as e:
+                        self.log_message(f"Error broadcasting message: {str(e)}")
+        except Exception as e:
+            self.log_message(f"Error in room broadcast: {str(e)}")
 
     def disconnect_client(self, client_socket):
         if client_socket in self.clients:
@@ -233,15 +270,19 @@ class ChatServer:
             sender_ip, sender_port = self.clients[sender_socket]["address"]
             sender_rooms = self.clients[sender_socket]["rooms"]
 
+            # Extract username from the message (assuming format "Username: message")
+            username = message.split(":", 1)[0]
+            message_content = message.split(":", 1)[1] if ":" in message else message
+
             for room_name in sender_rooms:
                 if room_name not in self.rooms:
                     continue  # Skip if room doesn't exist anymore
 
-                # Create room-specific hash for the message
-                formatted_message = f"[{room_name}] {sender_ip}:{sender_port}: {message}"
+                # Create a cleaner formatted message with just the username
+                formatted_message = f"[{room_name}] {username}:{message_content}"
                 room_hashed_message = RoomHasher.hash_message(formatted_message, room_name)
 
-                self.log_message(formatted_message)
+                self.log_message(f"Message in {room_name} from {sender_ip}:{sender_port}: {message}")
 
                 # Only broadcast to clients that are actually in this room
                 for client_socket in self.rooms[room_name]:

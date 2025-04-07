@@ -42,21 +42,26 @@ class ChatClient:
 
             return False, str(e)
 
-    def send_message(self, message):
+    def send_message(self, message, room_name=None):
         try:
             if not self.rooms:
                 return False, "Please join a room first"
 
-            formatted_message = f"{self.username}: {message}"
+            if room_name is None and len(self.rooms) > 0:
+                room_name = self.rooms[0]  # Default to first room if none specified
 
+            if room_name not in self.rooms:
+                return False, f"Not in room {room_name}"
+
+            # Format message with room information
+            formatted_message = f"/msg {room_name} {self.username}: {message}"
 
             encrypted_data = self.encrypt_message(formatted_message)
-
-
             send_encrypted_data(self.client_socket, encrypted_data)
-            return True, formatted_message
-        except Exception as e:
 
+            # Return the message as it should appear
+            return True, f"{self.username}: {message}"
+        except Exception as e:
             return False, str(e)
 
     def join_room(self, room_name):

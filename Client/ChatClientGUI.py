@@ -13,6 +13,10 @@ class ChatGUI:
     def __init__(self):
         self.root = ctk.CTk()
         self.root.withdraw()  # Hide main window initially
+        self.current_room = None
+        self.rooms = {}
+
+        self.room_messages = {}
 
         # Create login popup
         login = LoginPopup(self.root)
@@ -291,6 +295,8 @@ class ChatGUI:
         )
         main_content.pack(expand=True, fill='both', padx=10, pady=10)
 
+
+
         # Chat section
         chat_frame = ctk.CTkFrame(
             main_content,
@@ -302,16 +308,17 @@ class ChatGUI:
         chat_frame.pack(side='left', expand=True, fill='both', padx=(0, 10))
 
         # Chat header
-        chat_header = ctk.CTkFrame(chat_frame, fg_color="transparent", height=50)
-        chat_header.pack(fill='x', padx=20, pady=15)
-        chat_header.pack_propagate(False)
+        self.chat_header = ctk.CTkFrame(chat_frame, fg_color="transparent", height=50)
+        self.chat_header.pack(fill='x', padx=20, pady=15)
+        self.chat_header.pack_propagate(False)
 
-        ctk.CTkLabel(
-            chat_header,
+        self.chat_header_label = ctk.CTkLabel(
+            self.chat_header,
             text="💬 MESSAGES",
             font=("Segoe UI", 16, "bold"),
             text_color=self.colors['primary']
-        ).pack(side='left')
+        )
+        self.chat_header_label.pack(side='left')
 
         # Chat log
         self.chat_log = ctk.CTkTextbox(
@@ -449,14 +456,24 @@ class ChatGUI:
 
     def send_message(self):
         message = self.message_entry.get().strip()
-        if message:
-            success, response = self.chat_client.send_message(message)
+        if message and self.current_room:
+            success, response = self.chat_client.send_message(message, self.current_room)
             if success:
                 self.message_entry.delete(0, 'end')
-                self.append_to_chat(response)
+                # Add the message to the current room's history
+                if self.current_room not in self.room_messages:
+                    self.room_messages[self.current_room] = []
+                self.room_messages[self.current_room].append(response)
+
+                # Update the display
+                self.chat_log.configure(state='normal')
+                self.chat_log.insert('end', response + "\n")
+                self.chat_log.see('end')
+                self.chat_log.configure(state='disabled')
             else:
                 self.update_status(response, 'error')
-                self.append_to_chat(response)
+        elif not self.current_room:
+            self.update_status("Please select a room first", 'error')
 
     def join_room(self, room_name):
         if not room_name:
@@ -465,16 +482,42 @@ class ChatGUI:
 
         success, response = self.chat_client.join_room(room_name)
         if success:
+            # Initialize room messages if needed
+            if room_name not in self.room_messages:
+                self.room_messages[room_name] = []
+
+            # Create room button with select functionality instead of leave
             room_button = ctk.CTkButton(
                 self.room_list,
                 text=f"📁 {room_name}",
-                command=lambda r=room_name: self.leave_room(r),
+                command=lambda r=room_name: self.select_room(r),
                 fg_color=self.colors['surface'],
-                hover_color=self.colors['error'],
+                hover_color=self.colors['secondary'],
                 height=35
             )
             room_button.pack(fill='x', pady=5, padx=5)
-            self.append_to_chat(f"→ Joined room: {room_name}")
+
+            # Add a context menu for leaving the room
+            def show_context_menu(event):
+                menu = tkinter.Menu(self.root, tearoff=0, bg=self.colors['surface'], fg=self.colors['text'])
+                menu.add_command(label="Leave Room", command=lambda: self.leave_room(room_name))
+                menu.tk_popup(event.x_root, event.y_root)
+
+            room_button.bind("<Button-3>", show_context_menu)  # Right-click
+
+            # Add welcome message to room
+            join_message = f"→ You joined room: {room_name}"
+            if room_name not in self.room_messages:
+                self.room_messages[room_name] = []
+            self.room_messages[room_name].append(join_message)
+
+            # Auto-select the room if it's our first one
+            if not self.current_room:
+                self.select_room(room_name)
+            elif self.current_room == room_name:
+                # If we're joining the current room, refresh the display
+                self.refresh_chat_display()
+
             self.update_status(f"Successfully joined room: {room_name}", 'success')
         else:
             self.update_status(f"Failed to join room: {response}", 'error')
@@ -482,16 +525,76 @@ class ChatGUI:
     def leave_room(self, room_name):
         success, response = self.chat_client.leave_room(room_name)
         if success:
+            # Remove the room button
             for widget in self.room_list.winfo_children():
                 if isinstance(widget, ctk.CTkButton) and widget.cget("text") == f"📁 {room_name}":
                     widget.destroy()
-            self.append_to_chat(f"← Left room: {room_name}")
+                    break
+
+            # Clear room messages
+            if room_name in self.room_messages:
+                del self.room_messages[room_name]
+
+            # If this was the current room, clear the chat
+            if self.current_room == room_name:
+                self.current_room = None
+                self.update_chat_header("💬 MESSAGES")
+                self.chat_log.configure(state='normal')
+                self.chat_log.delete(1.0, 'end')
+                self.chat_log.insert('end', "You left the room. Please select another room.\n")
+                self.chat_log.configure(state='disabled')
+
+                # Auto-select another room if available
+                if self.rooms:
+                    self.select_room(self.rooms[0])
+
             self.update_status(f"Successfully left room: {room_name}", 'success')
         else:
             self.update_status(f"Failed to leave room: {response}", 'error')
 
+    # Modify the handle_incoming_message method
     def handle_incoming_message(self, message):
-        self.append_to_chat(message)
+        # Check if the message is for a specific room
+        room_name = None
+        if message.startswith("[") and "]" in message:
+            room_end = message.find("]")
+            room_name = message[1:room_end].strip()
+
+            # Extract just the content after the room prefix
+            message_content = message[room_end + 1:].strip()
+
+            # Store message in the right room's history
+            if room_name in self.chat_client.rooms:
+                if room_name not in self.room_messages:
+                    self.room_messages[room_name] = []
+
+                # Store just the message content without the room prefix
+                self.room_messages[room_name].append(message_content)
+
+                # Only update display if this is the current room
+                if room_name == self.current_room:
+                    self.chat_log.configure(state='normal')
+                    self.chat_log.insert('end', message_content + "\n")
+                    self.chat_log.see('end')
+                    self.chat_log.configure(state='disabled')
+        else:
+            # For system messages or messages without a room
+            if message.startswith("[SYSTEM]") or "Received encryption key" in message:
+                # Add to relevant rooms
+                for room in self.chat_client.rooms:
+                    if room not in self.room_messages:
+                        self.room_messages[room] = []
+                    self.room_messages[room].append(message)
+
+                # Display in current room
+                if self.current_room:
+                    self.chat_log.configure(state='normal')
+                    self.chat_log.insert('end', message + "\n")
+                    self.chat_log.see('end')
+                    self.chat_log.configure(state='disabled')
+            else:
+                # For general messages without a room tag
+                self.append_to_chat(message)
 
     def append_to_chat(self, message):
         self.chat_log.configure(state='normal')
@@ -535,6 +638,7 @@ class ChatGUI:
         y = (self.root.winfo_screenheight() // 2) - (height // 2)
         self.root.geometry(f'+{x}+{y}')
 
+    # Modify the handle_room_closed method to handle the current room being closed
     def handle_room_closed(self, room_name):
         """Handle when a room is closed by the server"""
         # Remove the room button from the GUI
@@ -542,6 +646,60 @@ class ChatGUI:
             if isinstance(widget, ctk.CTkButton) and widget.cget("text") == f"📁 {room_name}":
                 widget.destroy()
                 break
+
+        # Clean up room messages
+        if room_name in self.room_messages:
+            del self.room_messages[room_name]
+
+        # If this was the current room, clear the display and reset
+        if self.current_room == room_name:
+            self.current_room = None
+            self.update_chat_header("💬 MESSAGES")
+            self.chat_log.configure(state='normal')
+            self.chat_log.delete(1.0, 'end')
+            self.chat_log.insert('end', "The current room has been closed.\nPlease select another room.\n")
+            self.chat_log.configure(state='disabled')
+
+            # Auto-select another room if available
+            if self.rooms:
+                self.select_room(self.rooms[0])
+
+    def select_room(self, room_name):
+        # Update the current room
+        self.current_room = room_name
+
+        # Update the chat header to show the current room
+        self.update_chat_header(f"💬 ROOM: {room_name}")
+
+        # Clear the chat log and show only messages for this room
+        self.refresh_chat_display()
+
+        # Highlight the selected room button and unhighlight others
+        for widget in self.room_list.winfo_children():
+            if isinstance(widget, ctk.CTkButton):
+                button_text = widget.cget("text")
+                if button_text.startswith("📁 "):
+                    button_room = button_text[2:]  # Remove the 📁 emoji
+                    if button_room == room_name:
+                        widget.configure(fg_color=self.colors['primary'])
+                    else:
+                        widget.configure(fg_color=self.colors['surface'])
+
+    def update_chat_header(self, text):
+        # Update the chat header text
+        if hasattr(self, 'chat_header_label'):
+            self.chat_header_label.configure(text=text)
+
+    def refresh_chat_display(self):
+        self.chat_log.configure(state='normal')
+        self.chat_log.delete(1.0, 'end')  # Clear all text
+
+        if self.current_room and self.current_room in self.room_messages:
+            for message in self.room_messages[self.current_room]:
+                self.chat_log.insert('end', message + "\n")
+
+        self.chat_log.configure(state='disabled')
+        self.chat_log.see('end')
 
 
 if __name__ == "__main__":
