@@ -19,7 +19,7 @@ class ChatGUI:
         username = login.get_username()
 
         if username:
-            self.chat_client = ChatClient(message_callback=self.handle_incoming_message)
+            self.chat_client = ChatClient(message_callback=self.handle_incoming_message, room_closed_callback=self.handle_room_closed)
             ctk.set_appearance_mode("dark")
             ctk.set_default_color_theme("blue")
             self.setup_colors()
@@ -534,6 +534,14 @@ class ChatGUI:
         x = (self.root.winfo_screenwidth() // 2) - (width // 2)
         y = (self.root.winfo_screenheight() // 2) - (height // 2)
         self.root.geometry(f'+{x}+{y}')
+
+    def handle_room_closed(self, room_name):
+        """Handle when a room is closed by the server"""
+        # Remove the room button from the GUI
+        for widget in self.room_list.winfo_children():
+            if isinstance(widget, ctk.CTkButton) and widget.cget("text") == f"📁 {room_name}":
+                widget.destroy()
+                break
 
 
 if __name__ == "__main__":

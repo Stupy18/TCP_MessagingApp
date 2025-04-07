@@ -19,13 +19,14 @@ from TLS.RoomHasher import RoomHasher
 
 
 class ChatClient:
-    def __init__(self, message_callback=None):
+    def __init__(self, message_callback=None, room_closed_callback=None):
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.username = None
         self.connected = False
         self.symmetric_key = None
         self.rooms = []
         self.message_callback = message_callback
+        self.room_closed_callback = room_closed_callback
 
     def connect_to_server(self, server_ip, server_port, username):
         try:
@@ -114,6 +115,17 @@ class ChatClient:
                         if success and self.message_callback:
                             self.message_callback(f"Received encryption key for room: {room_name}")
                         continue
+
+                if decrypted_message.startswith("/room_closed "):
+                    room_name = decrypted_message.split(" ", 1)[1].strip()
+                    if room_name in self.rooms:
+                        self.rooms.remove(room_name)
+                        if self.message_callback:
+                            self.message_callback(f"Room '{room_name}' has been closed by the server.")
+                        # Call the room_closed_callback to update the GUI
+                        if self.room_closed_callback:
+                            self.room_closed_callback(room_name)
+                    continue
 
                 # Handle regular messages
                 verified_message, room = self._extract_room_and_verify_message(decrypted_message)

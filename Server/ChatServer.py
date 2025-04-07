@@ -531,9 +531,28 @@ class ChatServer:
         return False
 
     def close_room(self, room_name):
-        """Close a room and disconnect all clients from it"""
+        """Close a room and notify all clients before removing it"""
         if room_name in self.rooms:
+            # First notify all clients in the room that it's being closed
+            close_message = f"Room '{room_name}' is being closed by the server."
+            self.broadcast_system_message(close_message, room_name)
+
+            # Send a special command to tell clients to remove the room
+            remove_command = f"/room_closed {room_name}"
             for client_socket in self.rooms[room_name][:]:
-                self.leave_room(client_socket, room_name)
+                try:
+                    symmetric_key = self.clients[client_socket]["symmetric_key"]
+                    encrypted_command = AESGCMCipher.encrypt(symmetric_key, remove_command)
+                    send_encrypted_data(client_socket, encrypted_command)
+
+                    # Remove the room from the client's list of rooms
+                    if room_name in self.clients[client_socket]["rooms"]:
+                        self.clients[client_socket]["rooms"].remove(room_name)
+                except Exception as e:
+                    self.log_message(f"Error notifying client about room closure: {str(e)}")
+
+            # Clear the room
+            self.rooms.pop(room_name)
+            self.log_message(f"Room '{room_name}' has been closed by admin")
             return True
         return False
