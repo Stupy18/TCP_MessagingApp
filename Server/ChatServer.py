@@ -19,6 +19,7 @@ class ChatServer:
         self.server_socket = None
         self.clients = {}
         self.rooms = {}
+        self.room_settings = {}
         self.is_running = False
         self.ecdsa_private_key, self.ecdsa_public_key = DigitalSignature.generate_keypair()
         self.private_key = None
@@ -221,13 +222,13 @@ class ChatServer:
         # If room exists, check if it has a password requirement
         if room_name in self.rooms:
             # Check if the room has a password and if the provided password matches
-            if "password" in self.rooms[room_name + "_settings"]:
-                stored_password = self.rooms[room_name + "_settings"]["password"]
+            if room_name in self.room_settings and "password" in self.room_settings[room_name]:
+                stored_password = self.room_settings[room_name]["password"]
 
                 # If password is required but not provided or doesn't match
                 if not room_password or stored_password != room_password:
                     # Send error message
-                    error_message = f"/error Room '{room_name}' requires a password"
+                    error_message = f"/error Incorrect password for room '{room_name}'"
                     symmetric_key = self.clients[client_socket]["symmetric_key"]
                     encrypted_message = AESGCMCipher.encrypt(symmetric_key, error_message)
                     send_encrypted_data(client_socket, encrypted_message)
@@ -236,12 +237,13 @@ class ChatServer:
         # Create room if it doesn't exist
         if room_name not in self.rooms:
             self.rooms[room_name] = []
-            # Initialize room settings
-            self.rooms[room_name + "_settings"] = {}
+
+            # Initialize room settings dictionary for this room
+            self.room_settings[room_name] = {}
 
             # If a password was provided during creation, store it
             if room_password:
-                self.rooms[room_name + "_settings"]["password"] = room_password
+                self.room_settings[room_name]["password"] = room_password
 
             # Initialize room hash key when room is created
             RoomHasher.create_room_key(room_name)
@@ -589,11 +591,13 @@ class ChatServer:
         """Return a list of dictionaries containing room information"""
         room_list = []
         for room_name, clients in self.rooms.items():
-            room_list.append({
-                "name": room_name,
-                "active_users": len(clients),
-                "message_count": "N/A"  # Could be enhanced to track messages per room
-            })
+            # Skip the _settings entries
+            if "_settings" not in room_name:
+                room_list.append({
+                    "name": room_name,
+                    "active_users": len(clients),
+                    "message_count": "N/A"  # Could be enhanced to track messages per room
+                })
 
         return room_list
 
@@ -625,6 +629,10 @@ class ChatServer:
                         self.clients[client_socket]["rooms"].remove(room_name)
                 except Exception as e:
                     self.log_message(f"Error notifying client about room closure: {str(e)}")
+
+            # Clean up room settings
+            if room_name in self.room_settings:
+                del self.room_settings[room_name]
 
             # Clear the room
             self.rooms.pop(room_name)
