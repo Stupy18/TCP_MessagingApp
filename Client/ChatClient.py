@@ -64,25 +64,24 @@ class ChatClient:
         except Exception as e:
             return False, str(e)
 
-    def join_room(self, room_name):
+    def join_room(self, room_name, password=None):
         try:
             if room_name not in self.rooms:
-
+                # Format the join command with an optional password
                 command = f"/join {room_name}"
+                if password:
+                    command += f" password={password}"
 
-
+                # Send join request to the server
                 encrypted_data = self.encrypt_message(command)
-
-
                 send_encrypted_data(self.client_socket, encrypted_data)
-                self.rooms.append(room_name)
-                return True, room_name
+
+                # We'll return success for sending the request, not for joining the room
+                # The actual room joining will be confirmed when we receive the room key
+                return True, "Join request sent"
 
             return False, "Already in room"
         except Exception as e:
-            if room_name in self.rooms:
-                self.rooms.remove(room_name)
-
             return False, str(e)
 
     def leave_room(self, room_name):
@@ -107,38 +106,70 @@ class ChatClient:
 
     def listen_for_messages(self):
         try:
-            while True:
-                encrypted_data = receive_encrypted_data(self.client_socket)
-                decrypted_message = AESGCMCipher.decrypt(self.symmetric_key, encrypted_data)
+            while self.connected:
+                try:
+                    encrypted_data = receive_encrypted_data(self.client_socket)
+                    decrypted_message = AESGCMCipher.decrypt(self.symmetric_key, encrypted_data)
 
-                # Handle room key messages before anything else
-                if decrypted_message.startswith("/room_key "):
-                    parts = decrypted_message.split(" ", 2)
-                    if len(parts) == 3:
-                        _, room_name, key_data = parts
-                        success = RoomHasher.import_room_key(room_name, key_data)
-                        if success and self.message_callback:
-                            self.message_callback(f"Received encryption key for room: {room_name}")
+                    # Handle room key messages - this is confirmation that we joined successfully
+                    if decrypted_message.startswith("/room_key "):
+                        parts = decrypted_message.split(" ", 2)
+                        if len(parts) == 3:
+                            _, room_name, key_data = parts
+                            success = RoomHasher.import_room_key(room_name, key_data)
+                            # Add the room to our list ONLY when we get the room key
+                            if room_name not in self.rooms:
+                                self.rooms.append(room_name)
+                            if success and self.message_callback:
+                                self.message_callback(f"Received encryption key for room: {room_name}")
                         continue
 
-                if decrypted_message.startswith("/room_closed "):
-                    room_name = decrypted_message.split(" ", 1)[1].strip()
-                    if room_name in self.rooms:
-                        self.rooms.remove(room_name)
+                    # Handle error messages (like wrong password)
+                    if decrypted_message.startswith("/error "):
+                        error_message = decrypted_message[7:]  # Remove "/error " prefix
                         if self.message_callback:
-                            self.message_callback(f"Room '{room_name}' has been closed by the server.")
-                        # Call the room_closed_callback to update the GUI
-                        if self.room_closed_callback:
-                            self.room_closed_callback(room_name)
-                    continue
+                            # Make the error message more user-friendly
+                            formatted_error = f"Error: {error_message}"
+                            self.message_callback(formatted_error)
+                        continue
 
-                # Handle regular messages
-                verified_message, room = self._extract_room_and_verify_message(decrypted_message)
-                if self.message_callback:
-                    self.message_callback(verified_message)
+                    # Handle room closure messages
+                    if decrypted_message.startswith("/room_closed "):
+                        room_name = decrypted_message.split(" ", 1)[1].strip()
+                        if room_name in self.rooms:
+                            self.rooms.remove(room_name)
+                            if self.message_callback:
+                                self.message_callback(f"Room '{room_name}' has been closed by the server.")
+                            # Call the room_closed_callback to update the GUI
+                            if self.room_closed_callback:
+                                self.room_closed_callback(room_name)
+                        continue
+
+                    # Handle regular messages
+                    verified_message, room = self._extract_room_and_verify_message(decrypted_message)
+                    if self.message_callback:
+                        self.message_callback(verified_message)
+                except ConnectionError:
+                    # Connection was closed
+                    self.connected = False
+                    if self.message_callback:
+                        self.message_callback("Connection to server lost")
+                    break
+                except Exception as e:
+                    # Log the error but don't break the loop for recoverable errors
+                    print(f"Error processing message: {str(e)}")
+                    # Continue the loop to try receiving more messages
 
         except Exception as e:
-            return False, str(e)
+            print(f"Error in listen_for_messages: {str(e)}")
+            if self.connected:
+                self.connected = False
+                # Try to notify the user via message callback if available
+                if self.message_callback:
+                    try:
+                        self.message_callback(f"Connection error: {str(e)}")
+                    except:
+                        pass  # Fail silently if we can't send the message
 
     def perform_key_exchange(self, username):
         try:

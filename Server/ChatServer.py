@@ -139,8 +139,8 @@ class ChatServer:
                     self.stats["total_messages"] += 1
 
                     if decrypted_message.startswith("/join "):
-                        room_name = decrypted_message.split(" ", 1)[1].strip()
-                        self.join_room(client_socket, room_name)
+                        # Pass the entire join message which may now include a password
+                        self.join_room(client_socket, decrypted_message)
                     elif decrypted_message.startswith("/leave "):
                         room_name = decrypted_message.split(" ", 1)[1].strip()
                         self.leave_room(client_socket, room_name)
@@ -208,17 +208,51 @@ class ChatServer:
 
             self.log_message(f"Client disconnected: {ip}:{port}")
 
-    def join_room(self, client_socket, room_name):
+    def join_room(self, client_socket, room_data):
+        # Parse room data which can now contain password info
+        parts = room_data.split()
+        room_name = parts[1].strip()
+
+        # Check if this is a password-protected room request
+        room_password = None
+        if len(parts) > 2 and parts[2].startswith("password="):
+            room_password = parts[2][9:].strip()  # Extract password after "password="
+
+        # If room exists, check if it has a password requirement
+        if room_name in self.rooms:
+            # Check if the room has a password and if the provided password matches
+            if "password" in self.rooms[room_name + "_settings"]:
+                stored_password = self.rooms[room_name + "_settings"]["password"]
+
+                # If password is required but not provided or doesn't match
+                if not room_password or stored_password != room_password:
+                    # Send error message
+                    error_message = f"/error Room '{room_name}' requires a password"
+                    symmetric_key = self.clients[client_socket]["symmetric_key"]
+                    encrypted_message = AESGCMCipher.encrypt(symmetric_key, error_message)
+                    send_encrypted_data(client_socket, encrypted_message)
+                    return  # Exit without joining
+
+        # Create room if it doesn't exist
         if room_name not in self.rooms:
             self.rooms[room_name] = []
+            # Initialize room settings
+            self.rooms[room_name + "_settings"] = {}
+
+            # If a password was provided during creation, store it
+            if room_password:
+                self.rooms[room_name + "_settings"]["password"] = room_password
+
             # Initialize room hash key when room is created
             RoomHasher.create_room_key(room_name)
             self.log_message(f"Created new room with unique hash key: {room_name}")
 
+        # Add client to the room
         if client_socket not in self.rooms[room_name]:
             self.rooms[room_name].append(client_socket)
             self.clients[client_socket]["rooms"].append(room_name)
 
+            # Send room key to the client for message verification
             room_key_data = RoomHasher.export_room_key(room_name)
             key_message = f"/room_key {room_name} {room_key_data}"
             symmetric_key = self.clients[client_socket]["symmetric_key"]
