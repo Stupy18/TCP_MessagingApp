@@ -725,7 +725,7 @@ class ChatGUI:
             if isinstance(widget, ctk.CTkButton):
                 button_text = widget.cget("text")
                 if button_text.startswith("📁 "):
-                    button_room = button_text[2:]  # Remove the 📁 emoji
+                    button_room = button_text[2:]
                     if button_room == room_name:
                         widget.configure(fg_color=self.colors['primary'])
                     else:

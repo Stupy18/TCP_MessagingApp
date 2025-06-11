@@ -55,7 +55,7 @@ class LoginPopup:
         # Create content
         title_label = ctk.CTkLabel(
             self.popup,
-            text="Welcome to Encryptify",
+            text="Welcome to SecureTransport",
             font=("Segoe UI", 24, "bold"),
             text_color='#F5F5F7'
         )

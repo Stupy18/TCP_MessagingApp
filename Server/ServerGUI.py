@@ -1,348 +1,523 @@
-import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox
-import threading
+import traceback
+import customtkinter as ctk
+from tkinter import messagebox, scrolledtext
 from datetime import datetime
+import threading
 import time
-
 from ChatServer import ChatServer
 
 
-class ServerGUI:
+class ModernServerGUI:
     def __init__(self):
+        # Set appearance
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("blue")
+
         # Create server instance
         self.chat_server = ChatServer(log_callback=self.update_text_widget)
 
         # Main window setup
-        self.root = tk.Tk()
-        self.root.title("Secure Chat Server Dashboard")
-        self.root.geometry("1200x800")
+        self.root = ctk.CTk()
+        self.root.title("SecureTransport Server Dashboard")
+        self.root.geometry("1280x800")
         self.root.minsize(1000, 700)
 
-        # Configure style
-        self.setup_styles()
-
-        # Create main container
-        self.main_container = ttk.Frame(self.root, padding="10")
-        self.main_container.pack(expand=True, fill=tk.BOTH)
-
-        # Create layout
-        self.create_header_frame()
-        self.create_main_content()
-        self.create_status_bar()
-
-        # Bind window close event
-        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-
-        # Setup update timer
-        self.root.after(1000, self.update_status_bar)
-
-    def setup_styles(self):
-        self.style = ttk.Style()
-        self.style.theme_use("clam")
-
-        # Define colors
+        # Define color palette
         self.colors = {
-            "primary": "#1a237e",  # Deep blue
-            "secondary": "#283593",
-            "accent": "#3949ab",
-            "success": "#43a047",
-            "warning": "#fdd835",
-            "danger": "#e53935",
+            "primary": "#3a7ebf",
+            "hover_primary": "#2b5d8b",
+            "accent": "#7e3abf",
+            "success": "#2D9D78",
+            "warning": "#e6b422",
+            "danger": "#e63946",
+            "background": "#1e1e1e",
+            "card": "#2a2a2a",
             "text": "#ffffff",
-            "text_dark": "#212121",
-            "background": "#f5f5f5"
+            "text_secondary": "#a0a0a0"
         }
 
-        # Configure styles
-        self.style.configure("Header.TFrame", background=self.colors["primary"])
-        self.style.configure("Main.TFrame", background=self.colors["background"])
-        self.style.configure("Status.TFrame", background=self.colors["primary"])
+        # Create main container with padding
+        self.main = ctk.CTkFrame(self.root, fg_color="transparent")
+        self.main.pack(expand=True, fill="both", padx=20, pady=20)
 
-        self.style.configure("Header.TLabel",
-                             background=self.colors["primary"],
-                             foreground=self.colors["text"],
-                             font=("Helvetica", 12, "bold"))
+        # Create layout components
+        self.build_header()
+        self.build_stats()
+        self.build_tabs()
+        self.build_status()
 
-        self.style.configure("Status.TLabel",
-                             background=self.colors["primary"],
-                             foreground=self.colors["text"],
-                             font=("Helvetica", 9))
+        # Setup update timer
+        self.root.after(1000, self.update_stats)
 
-        # Button styles
-        self.style.configure("Control.TButton",
-                             font=("Helvetica", 10),
-                             padding=5)
+        # Bind window close event
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        self.style.configure("Action.TButton",
-                             font=("Helvetica", 10),
-                             padding=5)
+    def build_header(self):
+        header = ctk.CTkFrame(
+            self.main,
+            corner_radius=16,
+            fg_color=self.colors["card"],
+            border_width=1,
+            border_color=self.colors["primary"]
+        )
+        header.pack(fill="x", pady=(0, 16))
 
-        self.style.configure("Danger.TButton",
-                             font=("Helvetica", 10),
-                             padding=5)
+        title = ctk.CTkLabel(
+            header,
+            text="Secure Chat Server",
+            font=ctk.CTkFont(size=20, weight="bold")
+        )
+        title.pack(side="left", padx=20, pady=12)
 
-        self.style.map("Control.TButton",
-                       background=[("active", self.colors["accent"]),
-                                   ("disabled", self.colors["secondary"])],
-                       foreground=[("active", self.colors["text"]),
-                                   ("disabled", self.colors["text"])])
+        controls = ctk.CTkFrame(header, fg_color="transparent")
+        controls.pack(side="right", padx=20)
 
-        self.style.map("Action.TButton",
-                       background=[("active", self.colors["success"]),
-                                   ("disabled", self.colors["secondary"])],
-                       foreground=[("active", self.colors["text"]),
-                                   ("disabled", self.colors["text"])])
-
-        self.style.map("Danger.TButton",
-                       background=[("active", self.colors["danger"]),
-                                   ("disabled", self.colors["secondary"])],
-                       foreground=[("active", self.colors["text"]),
-                                   ("disabled", self.colors["text"])])
-
-    def create_header_frame(self):
-        header_frame = ttk.Frame(self.main_container, style="Header.TFrame")
-        header_frame.pack(fill=tk.X, pady=(0, 10))
-
-        # Server controls
-        controls_frame = ttk.Frame(header_frame, style="Header.TFrame")
-        controls_frame.pack(side=tk.LEFT, padx=5)
-
-        ttk.Label(controls_frame, text="Server IP:", style="Header.TLabel").pack(side=tk.LEFT, padx=5)
-        self.host_entry = ttk.Entry(controls_frame, width=15)
+        self.host_entry = ctk.CTkEntry(controls, width=160, placeholder_text="Server IP")
         self.host_entry.insert(0, "0.0.0.0")
-        self.host_entry.pack(side=tk.LEFT, padx=5)
+        self.host_entry.pack(side="left", padx=5)
 
-        ttk.Label(controls_frame, text="Port:", style="Header.TLabel").pack(side=tk.LEFT, padx=5)
-        self.port_entry = ttk.Entry(controls_frame, width=6)
+        self.port_entry = ctk.CTkEntry(controls, width=80, placeholder_text="Port")
         self.port_entry.insert(0, str(self.chat_server.port))
-        self.port_entry.pack(side=tk.LEFT, padx=5)
+        self.port_entry.pack(side="left", padx=5)
 
-        self.start_button = ttk.Button(controls_frame, text="Start Server",
-                                       command=self.start, style="Control.TButton")
-        self.start_button.pack(side=tk.LEFT, padx=5)
+        self.start_button = ctk.CTkButton(
+            controls,
+            text="▶ Start",
+            command=self.start,
+            fg_color=self.colors["primary"],
+            hover_color=self.colors["hover_primary"]
+        )
+        self.start_button.pack(side="left", padx=5)
 
-        self.stop_button = ttk.Button(controls_frame, text="Stop Server",
-                                      command=self.stop, style="Danger.TButton", state=tk.DISABLED)
-        self.stop_button.pack(side=tk.LEFT, padx=5)
+        self.stop_button = ctk.CTkButton(
+            controls,
+            text="■ Stop",
+            command=self.stop,
+            fg_color=self.colors["danger"],
+            hover_color="#c62f3b",
+            state="disabled"
+        )
+        self.stop_button.pack(side="left", padx=5)
 
-        # Server status
-        status_frame = ttk.Frame(header_frame, style="Header.TFrame")
-        status_frame.pack(side=tk.RIGHT, padx=5)
+    def build_stats(self):
+        stats = ctk.CTkFrame(self.main, fg_color="transparent")
+        stats.pack(fill="x", pady=(0, 16))
 
-        self.status_label = ttk.Label(status_frame, text="Server Status: Stopped",
-                                      style="Header.TLabel")
-        self.status_label.pack(side=tk.RIGHT, padx=5)
+        self.conn_card = self.create_stat_card(stats, "Connections", "0", self.colors["primary"])
+        self.msg_card = self.create_stat_card(stats, "Messages", "0", self.colors["accent"])
+        self.room_card = self.create_stat_card(stats, "Rooms", "0", self.colors["success"])
+        self.uptime_card = self.create_stat_card(stats, "Uptime", "0:00:00", self.colors["warning"])
 
-    def create_main_content(self):
-        # Create notebook for tabbed interface
-        self.notebook = ttk.Notebook(self.main_container)
-        self.notebook.pack(expand=True, fill=tk.BOTH, pady=5)
+    def create_stat_card(self, parent, title, value, color):
+        card = ctk.CTkFrame(
+            parent,
+            corner_radius=16,
+            fg_color=self.colors["card"],
+            border_width=1,
+            border_color=color
+        )
+        card.pack(side="left", expand=True, fill="x", padx=8)
 
-        # Server Log Tab
-        log_frame = ttk.Frame(self.notebook)
-        self.notebook.add(log_frame, text="Server Log")
+        strip = ctk.CTkFrame(card, height=5, corner_radius=0, fg_color=color)
+        strip.pack(fill="x", pady=(0, 5))
 
-        log_controls = ttk.Frame(log_frame)
-        log_controls.pack(fill=tk.X, pady=(5, 0))
+        ctk.CTkLabel(
+            card,
+            text=title,
+            font=ctk.CTkFont(size=12),
+            text_color=self.colors["text_secondary"]
+        ).pack(anchor="w", padx=10)
 
-        ttk.Button(log_controls, text="Export Logs",
-                   command=self.export_logs, style="Action.TButton").pack(side=tk.LEFT, padx=5)
-        ttk.Button(log_controls, text="Clear Logs",
-                   command=self.clear_logs, style="Danger.TButton").pack(side=tk.LEFT, padx=5)
+        label = ctk.CTkLabel(
+            card,
+            text=value,
+            font=ctk.CTkFont(size=20, weight="bold")
+        )
+        label.pack(anchor="w", padx=10, pady=(0, 10))
 
-        self.text_widget = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD,
-                                                     height=15, font=("Consolas", 10))
-        self.text_widget.pack(expand=True, fill=tk.BOTH, pady=5)
+        return label
+
+    def build_tabs(self):
+        self.tabview = ctk.CTkTabview(
+            self.main,
+            corner_radius=16,
+            fg_color=self.colors["card"],
+            segmented_button_fg_color=self.colors["background"],
+            segmented_button_selected_color=self.colors["primary"],
+            segmented_button_selected_hover_color=self.colors["hover_primary"]
+        )
+        self.tabview.pack(expand=True, fill="both")
+
+        # Create tabs
+        self.tabview.add("Logs")
+        self.tabview.add("Connected Clients")
+        self.tabview.add("Chat Rooms")
+
+        # Set default tab
+        self.tabview.set("Logs")
+
+        # Logs Tab
+        self.setup_logs_tab()
 
         # Clients Tab
-        clients_frame = ttk.Frame(self.notebook)
-        self.notebook.add(clients_frame, text="Connected Clients")
-
-        # Client controls
-        client_controls = ttk.Frame(clients_frame)
-        client_controls.pack(fill=tk.X, pady=(5, 0))
-
-        ttk.Button(client_controls, text="Disconnect Selected",
-                   command=self.disconnect_selected_client,
-                   style="Danger.TButton").pack(side=tk.LEFT, padx=5)
-        ttk.Button(client_controls, text="Disconnect All",
-                   command=self.disconnect_all_clients,
-                   style="Danger.TButton").pack(side=tk.LEFT, padx=5)
-        ttk.Button(client_controls, text="Refresh List",
-                   command=self.update_client_list,
-                   style="Action.TButton").pack(side=tk.LEFT, padx=5)
-
-        # Create treeview for clients
-        columns = ("IP", "Port", "Connected Time", "Active Rooms")
-        self.clients_tree = ttk.Treeview(clients_frame, columns=columns, show="headings")
-
-        # Configure columns
-        for col in columns:
-            self.clients_tree.heading(col, text=col)
-            self.clients_tree.column(col, width=150)
-
-        self.clients_tree.pack(expand=True, fill=tk.BOTH, pady=5)
-
-        # Add scrollbar
-        scrollbar = ttk.Scrollbar(clients_frame, orient=tk.VERTICAL,
-                                  command=self.clients_tree.yview)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.clients_tree.configure(yscrollcommand=scrollbar.set)
+        self.setup_clients_tab()
 
         # Rooms Tab
-        rooms_frame = ttk.Frame(self.notebook)
-        self.notebook.add(rooms_frame, text="Chat Rooms")
+        self.setup_rooms_tab()
+
+        # Initialize client and room lists
+        self.client_frames = []
+        self.client_data = []
+        self.room_frames = []
+        self.room_data = []
+
+        # Initial updates
+        self.update_client_list()
+        self.update_rooms_list()
+
+    def setup_logs_tab(self):
+        log_frame = self.tabview.tab("Logs")
+
+        # Log controls
+        button_frame = ctk.CTkFrame(log_frame, fg_color="transparent")
+        button_frame.pack(pady=10)
+
+        export_btn = ctk.CTkButton(
+            button_frame,
+            text="📁 Export Logs",
+            command=self.export_logs,
+            fg_color=self.colors["primary"],
+            hover_color=self.colors["hover_primary"]
+        )
+        export_btn.pack(side="left", padx=10)
+
+        clear_btn = ctk.CTkButton(
+            button_frame,
+            text="🗑 Clear Logs",
+            command=self.clear_logs,
+            fg_color=self.colors["danger"],
+            hover_color="#c62f3b"
+        )
+        clear_btn.pack(side="left", padx=10)
+
+        # Log text widget
+        self.text_widget = scrolledtext.ScrolledText(
+            log_frame,
+            wrap="word",
+            font=("Consolas", 10),
+            bg="#1e1e1e",
+            fg="#e0e0e0",
+            insertbackground="#e0e0e0",
+            borderwidth=0
+        )
+        self.text_widget.pack(expand=True, fill="both", padx=10, pady=10)
+
+    def setup_clients_tab(self):
+        clients_frame = self.tabview.tab("Connected Clients")
+
+        # Client controls
+        client_controls = ctk.CTkFrame(clients_frame, fg_color="transparent")
+        client_controls.pack(fill="x", pady=10)
+
+        disconnect_selected = ctk.CTkButton(
+            client_controls,
+            text="Disconnect Selected",
+            command=self.disconnect_selected_client,
+            fg_color=self.colors["danger"],
+            hover_color="#c62f3b",
+            width=160
+        )
+        disconnect_selected.pack(side="left", padx=5)
+
+        disconnect_all = ctk.CTkButton(
+            client_controls,
+            text="Disconnect All",
+            command=self.disconnect_all_clients,
+            fg_color=self.colors["danger"],
+            hover_color="#c62f3b",
+            width=120
+        )
+        disconnect_all.pack(side="left", padx=5)
+
+        refresh_clients = ctk.CTkButton(
+            client_controls,
+            text="↻ Refresh",
+            command=self.update_client_list,
+            fg_color=self.colors["primary"],
+            hover_color=self.colors["hover_primary"],
+            width=100
+        )
+        refresh_clients.pack(side="left", padx=5)
+
+        # Client list container
+        client_list_frame = ctk.CTkFrame(clients_frame, fg_color="#1e1e1e", corner_radius=6)
+        client_list_frame.pack(expand=True, fill="both", padx=10, pady=10)
+
+        # Headers
+        headers_frame = ctk.CTkFrame(client_list_frame, fg_color="#2a2a2a", height=30)
+        headers_frame.pack(fill="x", padx=2, pady=(2, 0))
+        headers_frame.pack_propagate(False)
+
+        header_texts = ["IP", "Port", "Connected Time", "Active Rooms"]
+        for i, text in enumerate(header_texts):
+            width = 150 if i < 3 else 300  # Make the Rooms column wider
+            header = ctk.CTkLabel(
+                headers_frame,
+                text=text,
+                font=ctk.CTkFont(weight="bold", size=12),
+                width=width
+            )
+            header.pack(side="left", padx=5)
+
+        # Scrollable frame for client items
+        self.clients_scrollable = ctk.CTkScrollableFrame(
+            client_list_frame,
+            fg_color="#1e1e1e",
+            corner_radius=0
+        )
+        self.clients_scrollable.pack(expand=True, fill="both", padx=2, pady=(0, 2))
+
+    def setup_rooms_tab(self):
+        rooms_frame = self.tabview.tab("Chat Rooms")
 
         # Room controls
-        room_controls = ttk.Frame(rooms_frame)
-        room_controls.pack(fill=tk.X, pady=(5, 0))
+        room_controls = ctk.CTkFrame(rooms_frame, fg_color="transparent")
+        room_controls.pack(fill="x", pady=10)
 
-        ttk.Button(room_controls, text="Close Selected Room",
-                   command=self.close_selected_room,
-                   style="Danger.TButton").pack(side=tk.LEFT, padx=5)
-        ttk.Button(room_controls, text="Close All Rooms",
-                   command=self.close_all_rooms,
-                   style="Danger.TButton").pack(side=tk.LEFT, padx=5)
-        ttk.Button(room_controls, text="Refresh Rooms",
-                   command=self.update_rooms_list,
-                   style="Action.TButton").pack(side=tk.LEFT, padx=5)
+        close_selected = ctk.CTkButton(
+            room_controls,
+            text="Close Selected Room",
+            command=self.close_selected_room,
+            fg_color=self.colors["danger"],
+            hover_color="#c62f3b",
+            width=160
+        )
+        close_selected.pack(side="left", padx=5)
 
-        # Create treeview for rooms
-        room_columns = ("Room Name", "Active Users", "Messages")
-        self.rooms_tree = ttk.Treeview(rooms_frame, columns=room_columns, show="headings")
+        close_all = ctk.CTkButton(
+            room_controls,
+            text="Close All Rooms",
+            command=self.close_all_rooms,
+            fg_color=self.colors["danger"],
+            hover_color="#c62f3b",
+            width=120
+        )
+        close_all.pack(side="left", padx=5)
 
-        for col in room_columns:
-            self.rooms_tree.heading(col, text=col)
-            self.rooms_tree.column(col, width=150)
+        refresh_rooms = ctk.CTkButton(
+            room_controls,
+            text="↻ Refresh",
+            command=self.update_rooms_list,
+            fg_color=self.colors["primary"],
+            hover_color=self.colors["hover_primary"],
+            width=100
+        )
+        refresh_rooms.pack(side="left", padx=5)
 
-        self.rooms_tree.pack(expand=True, fill=tk.BOTH, pady=5)
+        # Room list frame
+        room_list_frame = ctk.CTkFrame(rooms_frame, fg_color="#1e1e1e", corner_radius=6)
+        room_list_frame.pack(expand=True, fill="both", padx=10, pady=10)
 
-        # Add scrollbar
-        room_scrollbar = ttk.Scrollbar(rooms_frame, orient=tk.VERTICAL,
-                                       command=self.rooms_tree.yview)
-        room_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.rooms_tree.configure(yscrollcommand=room_scrollbar.set)
+        # Headers
+        room_headers_frame = ctk.CTkFrame(room_list_frame, fg_color="#2a2a2a", height=30)
+        room_headers_frame.pack(fill="x", padx=2, pady=(2, 0))
+        room_headers_frame.pack_propagate(False)
 
-    def create_status_bar(self):
-        status_bar = ttk.Frame(self.main_container, style="Status.TFrame")
-        status_bar.pack(fill=tk.X, side=tk.BOTTOM)
+        room_header_texts = ["Room Name", "Active Users", "Messages"]
+        room_header_widths = [300, 100, 100]
+        for i, text in enumerate(room_header_texts):
+            header = ctk.CTkLabel(
+                room_headers_frame,
+                text=text,
+                font=ctk.CTkFont(weight="bold", size=12),
+                width=room_header_widths[i]
+            )
+            header.pack(side="left", padx=5)
 
-        self.connection_count = ttk.Label(status_bar,
-                                          text="Connections: 0", style="Status.TLabel")
-        self.connection_count.pack(side=tk.LEFT, padx=5)
+        # Scrollable frame for room items
+        self.rooms_scrollable = ctk.CTkScrollableFrame(
+            room_list_frame,
+            fg_color="#1e1e1e",
+            corner_radius=0
+        )
+        self.rooms_scrollable.pack(expand=True, fill="both", padx=2, pady=(0, 2))
 
-        self.message_count = ttk.Label(status_bar,
-                                       text="Messages: 0", style="Status.TLabel")
-        self.message_count.pack(side=tk.LEFT, padx=5)
+    def build_status(self):
+        bar = ctk.CTkFrame(
+            self.main,
+            height=40,
+            corner_radius=10,
+            fg_color=self.colors["card"],
+            border_color=self.colors["primary"],
+            border_width=1
+        )
+        bar.pack(fill="x", pady=(16, 0))
+        bar.pack_propagate(False)
 
-        self.uptime_label = ttk.Label(status_bar,
-                                      text="Uptime: 0:00:00", style="Status.TLabel")
-        self.uptime_label.pack(side=tk.RIGHT, padx=5)
+        # Version info
+        ctk.CTkLabel(
+            bar,
+            text="SecureTransport Server v1.0",
+            font=ctk.CTkFont(size=12),
+            text_color=self.colors["text_secondary"]
+        ).pack(side="left", padx=15)
 
-    def update_status_bar(self):
+        # Server info button
+        self.server_info_button = ctk.CTkButton(
+            bar,
+            text="Server Info",
+            command=self.show_server_info,
+            fg_color="transparent",
+            text_color=self.colors["primary"],
+            hover_color="#333333",
+            width=100,
+            height=30
+        )
+        self.server_info_button.pack(side="right", padx=15)
+
+    def update_stats(self):
         stats = self.chat_server.get_stats()
 
         if stats["running"]:
-            self.connection_count.config(
-                text=f"Active Connections: {stats['active_connections']}")
-            self.message_count.config(
-                text=f"Total Messages: {stats['total_messages']}")
+            self.conn_card.configure(text=str(stats["active_connections"]))
+            self.msg_card.configure(text=str(stats["total_messages"]))
+            self.room_card.configure(text=str(stats["active_rooms"]))
 
             if stats["uptime"]:
-                hours = stats["uptime"].seconds // 3600
-                minutes = (stats["uptime"].seconds % 3600) // 60
-                seconds = stats["uptime"].seconds % 60
-                self.uptime_label.config(
-                    text=f"Uptime: {hours}:{minutes:02d}:{seconds:02d}")
+                seconds = stats["uptime"].seconds
+                uptime_str = f"{seconds // 3600}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}"
+                self.uptime_card.configure(text=uptime_str)
 
-        self.root.after(1000, self.update_status_bar)
-
-    def start(self):
-        try:
-            host = self.host_entry.get()
-            port = int(self.port_entry.get())
-
-            success, message = self.chat_server.start(host, port)
-
-            if success:
-                self.status_label.config(text="Server Status: Running")
-                self.start_button.config(state=tk.DISABLED)
-                self.stop_button.config(state=tk.NORMAL)
-                self.host_entry.config(state=tk.DISABLED)
-                self.port_entry.config(state=tk.DISABLED)
-            else:
-                messagebox.showerror("Error", message)
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to start server: {str(e)}")
-            self.update_text_widget(f"Failed to start server: {str(e)}\n")
-
-    def stop(self):
-        if messagebox.askyesno("Confirm Stop", "Are you sure you want to stop the server?"):
-            success, message = self.chat_server.stop()
-
-            if success:
-                self.status_label.config(text="Server Status: Stopped")
-                self.start_button.config(state=tk.NORMAL)
-                self.stop_button.config(state=tk.DISABLED)
-                self.host_entry.config(state=tk.NORMAL)
-                self.port_entry.config(state=tk.NORMAL)
-            else:
-                messagebox.showerror("Error", message)
+        self.root.after(1000, self.update_stats)
 
     def update_text_widget(self, message):
-        # This method is used as a callback for the server's log_callback
-        self.text_widget.configure(state=tk.NORMAL)
-        self.text_widget.insert(tk.END, message + "\n")
-        self.text_widget.configure(state=tk.DISABLED)
-        self.text_widget.see(tk.END)
+        self.text_widget.configure(state="normal")
+        self.text_widget.insert("end", message + "\n")
+        self.text_widget.configure(state="disabled")
+        self.text_widget.see("end")
+
+    def create_client_item(self, client_data):
+        # Create a frame for this client item
+        item_frame = ctk.CTkFrame(self.clients_scrollable, fg_color="#232323", height=40, corner_radius=6)
+        item_frame.pack(fill="x", padx=5, pady=3)
+        item_frame.pack_propagate(False)
+
+        # Store data for selection
+        item_frame.data = client_data
+
+        # Add client data to frame
+        ip_label = ctk.CTkLabel(item_frame, text=client_data["ip"], width=150)
+        ip_label.pack(side="left", padx=5)
+
+        port_label = ctk.CTkLabel(item_frame, text=client_data["port"], width=150)
+        port_label.pack(side="left", padx=5)
+
+        time_label = ctk.CTkLabel(item_frame, text=client_data["connected_time"], width=150)
+        time_label.pack(side="left", padx=5)
+
+        rooms_text = ", ".join(client_data["rooms"]) or "None"
+        rooms_label = ctk.CTkLabel(item_frame, text=rooms_text, width=300)
+        rooms_label.pack(side="left", padx=5)
+
+        # Add selection behavior
+        def on_click(event):
+            self.select_client_item(item_frame)
+
+        item_frame.bind("<Button-1>", on_click)
+        for widget in item_frame.winfo_children():
+            widget.bind("<Button-1>", on_click)
+
+        return item_frame
+
+    def select_client_item(self, item_frame):
+        # Toggle selection
+        if hasattr(item_frame, "selected") and item_frame.selected:
+            item_frame.configure(fg_color="#232323")
+            item_frame.selected = False
+        else:
+            item_frame.configure(fg_color=self.colors["primary"])
+            item_frame.selected = True
+
+    def create_room_item(self, room_data):
+        # Create a frame for this room item
+        item_frame = ctk.CTkFrame(self.rooms_scrollable, fg_color="#232323", height=40, corner_radius=6)
+        item_frame.pack(fill="x", padx=5, pady=3)
+        item_frame.pack_propagate(False)
+
+        # Store data for selection
+        item_frame.data = room_data
+
+        # Add room data to frame
+        name_label = ctk.CTkLabel(item_frame, text=room_data["name"], width=300)
+        name_label.pack(side="left", padx=5)
+
+        users_label = ctk.CTkLabel(item_frame, text=str(room_data["active_users"]), width=100)
+        users_label.pack(side="left", padx=5)
+
+        messages_label = ctk.CTkLabel(item_frame, text=room_data["message_count"], width=100)
+        messages_label.pack(side="left", padx=5)
+
+        # Add selection behavior
+        def on_click(event):
+            self.select_room_item(item_frame)
+
+        item_frame.bind("<Button-1>", on_click)
+        for widget in item_frame.winfo_children():
+            widget.bind("<Button-1>", on_click)
+
+        return item_frame
+
+    def select_room_item(self, item_frame):
+        # Toggle selection
+        if hasattr(item_frame, "selected") and item_frame.selected:
+            item_frame.configure(fg_color="#232323")
+            item_frame.selected = False
+        else:
+            item_frame.configure(fg_color=self.colors["primary"])
+            item_frame.selected = True
 
     def update_client_list(self):
         # Clear existing items
-        for item in self.clients_tree.get_children():
-            self.clients_tree.delete(item)
+        for frame in self.client_frames:
+            frame.destroy()
+        self.client_frames = []
 
         # Get client list from server
         client_list = self.chat_server.get_client_list()
+        self.client_data = client_list
 
-        # Add clients to treeview
+        # Create new items
         for client in client_list:
-            rooms = ", ".join(client["rooms"]) or "None"
-
-            self.clients_tree.insert("", tk.END, values=(
-                client["ip"],
-                client["port"],
-                client["connected_time"],
-                rooms
-            ))
+            client_frame = self.create_client_item(client)
+            self.client_frames.append(client_frame)
 
     def update_rooms_list(self):
         # Clear existing items
-        for item in self.rooms_tree.get_children():
-            self.rooms_tree.delete(item)
+        for frame in self.room_frames:
+            frame.destroy()
+        self.room_frames = []
 
         # Get room list from server
         room_list = self.chat_server.get_room_list()
+        self.room_data = room_list
 
-        # Add rooms to treeview
+        # Create new items
         for room in room_list:
-            self.rooms_tree.insert("", tk.END, values=(
-                room["name"],
-                room["active_users"],
-                room["message_count"]
-            ))
+            room_frame = self.create_room_item(room)
+            self.room_frames.append(room_frame)
 
     def disconnect_selected_client(self):
-        selection = self.clients_tree.selection()
-        if not selection:
+        # Find selected client frames
+        selected = [frame for frame in self.client_frames if hasattr(frame, "selected") and frame.selected]
+
+        if not selected:
             messagebox.showwarning("Warning", "Please select a client to disconnect")
             return
 
-        if messagebox.askyesno("Confirm Disconnect", "Are you sure you want to disconnect the selected client?"):
-            for item in selection:
-                values = self.clients_tree.item(item)['values']
-                ip, port = values[0], values[1]
-
+        if messagebox.askyesno("Confirm Disconnect", "Are you sure you want to disconnect the selected client(s)?"):
+            for frame in selected:
+                client_data = frame.data
+                ip, port = client_data["ip"], client_data["port"]
                 # Disconnect the client using the server method
                 self.chat_server.disconnect_client_by_address(ip, port)
 
@@ -368,16 +543,17 @@ class ServerGUI:
             self.update_client_list()
 
     def close_selected_room(self):
-        selection = self.rooms_tree.selection()
-        if not selection:
+        # Find selected room frames
+        selected = [frame for frame in self.room_frames if hasattr(frame, "selected") and frame.selected]
+
+        if not selected:
             messagebox.showwarning("Warning", "Please select a room to close")
             return
 
-        if messagebox.askyesno("Confirm Close Room", "Are you sure you want to close the selected room?"):
-            for item in selection:
-                values = self.rooms_tree.item(item)['values']
-                room_name = values[0]
-
+        if messagebox.askyesno("Confirm Close Room", "Are you sure you want to close the selected room(s)?"):
+            for frame in selected:
+                room_data = frame.data
+                room_name = room_data["name"]
                 # Close the room using the server method
                 self.chat_server.close_room(room_name)
 
@@ -400,9 +576,9 @@ class ServerGUI:
 
     def clear_logs(self):
         if messagebox.askyesno("Clear Logs", "Are you sure you want to clear the logs?"):
-            self.text_widget.configure(state=tk.NORMAL)
-            self.text_widget.delete(1.0, tk.END)
-            self.text_widget.configure(state=tk.DISABLED)
+            self.text_widget.configure(state="normal")
+            self.text_widget.delete(1.0, "end")
+            self.text_widget.configure(state="disabled")
 
     def export_logs(self):
         """Export server logs to a file"""
@@ -411,7 +587,7 @@ class ServerGUI:
             filename = f"server_log_{timestamp}.txt"
 
             with open(filename, "w") as f:
-                f.write(self.text_widget.get("1.0", tk.END))
+                f.write(self.text_widget.get(1.0, "end"))
 
             messagebox.showinfo("Success", f"Logs exported to {filename}")
         except Exception as e:
@@ -428,72 +604,185 @@ class ServerGUI:
             seconds = stats["uptime"].seconds % 60
             uptime_str = f"{hours}:{minutes:02d}:{seconds:02d}"
 
-        info = f"""
-    Server Information:
-    ------------------
-    Host: {stats['host'] or 'Not running'}
-    Port: {stats['port']}
-    Status: {'Running' if stats['running'] else 'Stopped'}
+        # Create an info dialog
+        info_dialog = ctk.CTkToplevel(self.root)
+        info_dialog.title("Server Information")
+        info_dialog.geometry("500x350")
+        info_dialog.resizable(False, False)
+        info_dialog.transient(self.root)
+        info_dialog.grab_set()
 
-    Statistics:
-    -----------
-    Total Connections: {stats['total_connections']}
-    Active Connections: {stats['active_connections']}
-    Total Messages: {stats['total_messages']}
-    Active Rooms: {stats['active_rooms']}
-    Uptime: {uptime_str}
-    """
-        messagebox.showinfo("Server Information", info)
+        # Set dialog layout
+        info_dialog.grid_columnconfigure(0, weight=1)
+        info_dialog.grid_rowconfigure(2, weight=1)
 
-    def on_closing(self):
+        # Title
+        title_label = ctk.CTkLabel(
+            info_dialog,
+            text="Server Information",
+            font=ctk.CTkFont(size=20, weight="bold")
+        )
+        title_label.grid(row=0, column=0, pady=(20, 0), sticky="ew")
+
+        # Separator
+        separator = ctk.CTkFrame(info_dialog, height=2, fg_color=self.colors["primary"])
+        separator.grid(row=1, column=0, sticky="ew", padx=20, pady=(10, 15))
+
+        # Content frame
+        content_frame = ctk.CTkFrame(info_dialog, fg_color="transparent")
+        content_frame.grid(row=2, column=0, sticky="nsew", padx=20, pady=10)
+
+        # Server info section
+        info_section = ctk.CTkFrame(content_frame, fg_color=self.colors["card"], corner_radius=10)
+        info_section.pack(fill="both", expand=True)
+
+        # Two columns layout
+        left_col = ctk.CTkFrame(info_section, fg_color="transparent")
+        left_col.pack(side="left", fill="both", expand=True, padx=15, pady=15)
+
+        right_col = ctk.CTkFrame(info_section, fg_color="transparent")
+        right_col.pack(side="right", fill="both", expand=True, padx=15, pady=15)
+
+        # Server info
+        ctk.CTkLabel(
+            left_col,
+            text="Connection",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            anchor="w"
+        ).pack(fill="x", pady=(0, 5))
+
+        ctk.CTkLabel(
+            left_col,
+            text=f"Host: {stats['host'] or 'Not running'}",
+            anchor="w"
+        ).pack(fill="x", pady=2)
+
+        ctk.CTkLabel(
+            left_col,
+            text=f"Port: {stats['port']}",
+            anchor="w"
+        ).pack(fill="x", pady=2)
+
+        ctk.CTkLabel(
+            left_col,
+            text=f"Status: {'Running' if stats['running'] else 'Stopped'}",
+            anchor="w"
+        ).pack(fill="x", pady=2)
+
+        # Stats
+        ctk.CTkLabel(
+            right_col,
+            text="Statistics",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            anchor="w"
+        ).pack(fill="x", pady=(0, 5))
+
+        ctk.CTkLabel(
+            right_col,
+            text=f"Total Connections: {stats['total_connections']}",
+            anchor="w"
+        ).pack(fill="x", pady=2)
+
+        ctk.CTkLabel(
+            right_col,
+            text=f"Active Connections: {stats['active_connections']}",
+            anchor="w"
+        ).pack(fill="x", pady=2)
+
+        ctk.CTkLabel(
+            right_col,
+            text=f"Total Messages: {stats['total_messages']}",
+            anchor="w"
+        ).pack(fill="x", pady=2)
+
+        ctk.CTkLabel(
+            right_col,
+            text=f"Active Rooms: {stats['active_rooms']}",
+            anchor="w"
+        ).pack(fill="x", pady=2)
+
+        ctk.CTkLabel(
+            right_col,
+            text=f"Uptime: {uptime_str}",
+            anchor="w"
+        ).pack(fill="x", pady=2)
+
+        # Close button
+        close_button = ctk.CTkButton(
+            info_dialog,
+            text="Close",
+            command=info_dialog.destroy,
+            fg_color=self.colors["primary"],
+            hover_color=self.colors["hover_primary"],
+            width=120
+        )
+        close_button.grid(row=3, column=0, pady=(0, 20))
+
+        # Center the dialog
+        info_dialog.update_idletasks()
+        width = info_dialog.winfo_width()
+        height = info_dialog.winfo_height()
+        x = (info_dialog.winfo_screenwidth() // 2) - (width // 2)
+        y = (info_dialog.winfo_screenheight() // 2) - (height // 2)
+        info_dialog.geometry(f'+{x}+{y}')
+
+    def start(self):
+        try:
+            host = self.host_entry.get()
+            port = int(self.port_entry.get())
+
+            success, msg = self.chat_server.start(host, port)
+
+            if success:
+                self.start_button.configure(state="disabled")
+                self.stop_button.configure(state="normal")
+                self.host_entry.configure(state="disabled")
+                self.port_entry.configure(state="disabled")
+            else:
+                messagebox.showerror("Error", msg)
+
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+            self.update_text_widget(f"Failed to start server: {str(e)}")
+
+
+    def stop(self):
+        if messagebox.askyesno("Stop Server", "Are you sure you want to stop the server?"):
+            success, msg = self.chat_server.stop()
+
+            if success:
+                self.start_button.configure(state="normal")
+                self.stop_button.configure(state="disabled")
+                self.host_entry.configure(state="normal")
+                self.port_entry.configure(state="normal")
+
+                # Reset stat cards
+                self.conn_card.configure(text="0")
+                self.msg_card.configure(text="0")
+                self.room_card.configure(text="0")
+                self.uptime_card.configure(text="0:00:00")
+            else:
+                messagebox.showerror("Error", msg)
+
+    def on_close(self):
         if self.chat_server.is_running:
-            if messagebox.askyesno("Quit", "Server is running. Stop server and quit?"):
+            if messagebox.askyesno("Confirm Exit", "Server is running. Are you sure you want to quit?"):
                 self.chat_server.stop()
                 self.root.destroy()
         else:
             self.root.destroy()
 
     def run(self):
-        # Add menu bar
-        menubar = tk.Menu(self.root)
-        self.root.config(menu=menubar)
-
-        # File menu
-        file_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="File", menu=file_menu)
-        file_menu.add_command(label="Export Logs", command=self.export_logs)
-        file_menu.add_command(label="Clear Logs", command=self.clear_logs)
-        file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.on_closing)
-
-        # Server menu
-        server_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Server", menu=server_menu)
-        server_menu.add_command(label="Start Server", command=self.start)
-        server_menu.add_command(label="Stop Server", command=self.stop)
-        server_menu.add_separator()
-        server_menu.add_command(label="Server Information", command=self.show_server_info)
-
-        # Clients menu
-        clients_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Clients", menu=clients_menu)
-        clients_menu.add_command(label="Disconnect Selected", command=self.disconnect_selected_client)
-        clients_menu.add_command(label="Disconnect All", command=self.disconnect_all_clients)
-        clients_menu.add_separator()
-        clients_menu.add_command(label="Refresh Client List", command=self.update_client_list)
-
-        # Rooms menu
-        rooms_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Rooms", menu=rooms_menu)
-        rooms_menu.add_command(label="Close Selected Room", command=self.close_selected_room)
-        rooms_menu.add_command(label="Close All Rooms", command=self.close_all_rooms)
-        rooms_menu.add_separator()
-        rooms_menu.add_command(label="Refresh Room List", command=self.update_rooms_list)
-
         # Start the main event loop
         self.root.mainloop()
 
-
 if __name__ == "__main__":
-    server_gui = ServerGUI()
-    server_gui.run()
+    try:
+        app = ModernServerGUI()
+        app.run()
+    except Exception as e:
+        print("Error starting application:", str(e))
+        print(traceback.format_exc())
+        input("Press Enter to exit...")
+
+

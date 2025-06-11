@@ -12,14 +12,13 @@ class KeyDerivation:
         Returns a 32-byte key suitable for AES-256.
         """
         try:
-            # Convert shared_secret to bytes if it isn't already
             if not isinstance(shared_secret, bytes):
                 shared_secret = bytes(shared_secret)
 
             hkdf = HKDF(
                 algorithm=SHA256(),
-                length=32,  # AES-256 key size
-                salt=None,  # No salt for deterministic output
+                length=32,
+                salt=None,
                 info=b'handshake data',
                 backend=default_backend()
             )
