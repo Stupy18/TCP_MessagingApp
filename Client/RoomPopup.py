@@ -1,8 +1,6 @@
-import os
-
 import customtkinter as ctk
 
-from resource_path import get_resource_path
+from Client.functionality.resource_path import get_resource_path
 
 
 class RoomPopup:

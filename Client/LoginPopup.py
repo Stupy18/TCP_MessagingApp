@@ -1,7 +1,7 @@
 import os
-from tkinter import messagebox, PhotoImage
+from tkinter import messagebox
 import customtkinter as ctk
-from resource_path import get_resource_path
+from Client.functionality.resource_path import get_resource_path
 
 class LoginPopup:
     def __init__(self, parent):
@@ -23,6 +23,7 @@ class LoginPopup:
         self.popup.title("")
         self.popup.geometry("400x300")
         self.popup.resizable(False, False)
+        self.popup.protocol("WM_DELETE_WINDOW", self.on_close)
 
         def load_icon():
             try:
@@ -141,3 +142,8 @@ class LoginPopup:
     def get_username(self):
         self.popup.wait_window()
         return self.username
+
+    def on_close(self):
+        """Handle window close button (X) properly"""
+        self.username = None  # Set username to None so app exits
+        self.popup.destroy()
