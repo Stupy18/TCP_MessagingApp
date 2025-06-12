@@ -33,6 +33,9 @@ class MessageBroadcaster:
 
             self.log_message(f"Message in {room_name} from {sender_ip}:{sender_port}: {message}")
 
+            # Increment message count for this room
+            self.room_manager.increment_room_message_count(room_name)
+
             # Send to other clients in this room only
             for client_socket in room_clients:
                 if client_socket != sender_socket:
@@ -54,7 +57,10 @@ class MessageBroadcaster:
         # Apply room-specific hashing to system messages too
         hashed_system_message = RoomHasher.hash_message(system_message, room_name)
 
+        # Increment message count for system messages too
         if self.room_manager.room_exists(room_name):
+            self.room_manager.increment_room_message_count(room_name)
+
             room_clients = self.room_manager.get_room_clients(room_name)
             for client_socket in room_clients:
                 try:
@@ -88,6 +94,9 @@ class MessageBroadcaster:
                 room_hashed_message = RoomHasher.hash_message(formatted_message, room_name)
 
                 self.log_message(f"Message in {room_name} from {sender_ip}:{sender_port}: {message}")
+
+                # Increment message count for this room
+                self.room_manager.increment_room_message_count(room_name)
 
                 # Only broadcast to clients that are actually in this room
                 room_clients = self.room_manager.get_room_clients(room_name)

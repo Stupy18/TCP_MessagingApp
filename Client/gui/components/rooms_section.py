@@ -14,6 +14,7 @@ class RoomsSection:
         self.rooms_frame = None
         self.room_list = None
         self.room_buttons = {}  # Track room buttons for management
+        self.selected_room = None
 
     def create_rooms_section(self):
         """Create the complete rooms section"""
@@ -52,7 +53,7 @@ class RoomsSection:
         self.room_list.pack(expand=True, fill='both', padx=20, pady=(0, 15))
 
         # Room controls
-        room_control_frame = ctk.CTkFrame(self.rooms_frame, fg_color="transparent", height=60)
+        room_control_frame = ctk.CTkFrame(self.rooms_frame, fg_color="transparent", height=100)
         room_control_frame.pack(fill='x', padx=20, pady=(0, 20))
         room_control_frame.pack_propagate(False)
 
@@ -65,9 +66,26 @@ class RoomsSection:
             fg_color=self.colors['secondary'],
             hover_color=self.colors['accent']
         )
-        join_button.pack(fill='x')
+        join_button.pack(fill='x', pady=(0, 10))
+
+        # Leave room button
+        self.leave_button = ctk.CTkButton(
+            room_control_frame,
+            text="Leave Room",
+            font=("Segoe UI", 13, "bold"),
+            height=45,
+            command=self._leave_selected_room,
+            fg_color=self.colors['error'],
+            hover_color="#D32F2F"
+        )
+        self.leave_button.pack(fill='x')
 
         return self.rooms_frame
+
+    def _leave_selected_room(self):
+        """Leave the currently selected room"""
+        if self.selected_room:
+            self.leave_room_callback(self.selected_room)
 
     def add_room_button(self, room_name):
         """Add a room button to the room list"""
@@ -107,6 +125,7 @@ class RoomsSection:
 
     def highlight_selected_room(self, selected_room_name):
         """Highlight the selected room button and unhighlight others"""
+        self.selected_room = selected_room_name
         for room_name, button in self.room_buttons.items():
             if room_name == selected_room_name:
                 button.configure(fg_color=self.colors['primary'])

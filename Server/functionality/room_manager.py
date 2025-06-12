@@ -7,6 +7,7 @@ class RoomManager:
     def __init__(self, log_callback=None):
         self.rooms = {}  # room_name -> [client_sockets]
         self.room_settings = {}  # room_name -> {password, etc.}
+        self.room_message_counts = {}  # room_name -> message_count
         self.log_callback = log_callback
 
     def create_room(self, room_name, password=None):
@@ -16,6 +17,9 @@ class RoomManager:
 
             # Initialize room settings dictionary for this room
             self.room_settings[room_name] = {}
+
+            # Initialize message count for this room
+            self.room_message_counts[room_name] = 0
 
             # If a password was provided during creation, store it
             if password:
@@ -35,11 +39,26 @@ class RoomManager:
             if room_name in self.room_settings:
                 del self.room_settings[room_name]
 
+            # Clean up message count
+            if room_name in self.room_message_counts:
+                del self.room_message_counts[room_name]
+
             # Clear the room
             del self.rooms[room_name]
             self.log_message(f"Room '{room_name}' has been deleted")
             return True
         return False
+
+    def increment_room_message_count(self, room_name):
+        """Increment the message count for a specific room"""
+        if room_name in self.rooms:
+            if room_name not in self.room_message_counts:
+                self.room_message_counts[room_name] = 0
+            self.room_message_counts[room_name] += 1
+
+    def get_room_message_count(self, room_name):
+        """Get the message count for a specific room"""
+        return self.room_message_counts.get(room_name, 0)
 
     def room_exists(self, room_name):
         """Check if a room exists"""
@@ -118,7 +137,7 @@ class RoomManager:
                 room_list.append({
                     "name": room_name,
                     "active_users": len(clients),
-                    "message_count": "N/A"  # Could be enhanced to track messages per room
+                    "message_count": self.get_room_message_count(room_name)  # Now returns actual count
                 })
 
         return room_list
