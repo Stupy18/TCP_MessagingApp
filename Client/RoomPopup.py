@@ -1,8 +1,6 @@
-import os
-
 import customtkinter as ctk
 
-from resource_path import get_resource_path
+from Client.functionality.resource_path import get_resource_path
 
 
 class RoomPopup:
@@ -17,7 +15,7 @@ class RoomPopup:
         # Create the popup window
         self.popup = ctk.CTkToplevel(self.parent)
         self.popup.title("")
-        self.popup.geometry("400x250")
+        self.popup.geometry("400x320")  # Increased height for password field
         self.popup.resizable(False, False)
 
         def load_icon():
@@ -67,7 +65,21 @@ class RoomPopup:
             border_color=self.colors['primary'],
             text_color=self.colors['text']
         )
-        self.room_entry.pack(pady=20)
+        self.room_entry.pack(pady=(10, 10))
+
+        # Password entry
+        self.password_entry = ctk.CTkEntry(
+            self.popup,
+            width=300,
+            height=45,
+            placeholder_text="Room password (optional)...",
+            font=("Segoe UI", 14),
+            fg_color=self.colors['surface_dark'],
+            border_color=self.colors['primary'],
+            text_color=self.colors['text'],
+            show="•"  # Show dots for password
+        )
+        self.password_entry.pack(pady=(0, 20))
 
         # Buttons frame
         buttons_frame = ctk.CTkFrame(
@@ -102,8 +114,10 @@ class RoomPopup:
         join_btn.pack(side='left', padx=10)
 
         # Bind Enter key
-        self.room_entry.bind('<Return>', lambda e: self.join())
+        self.room_entry.bind('<Return>', lambda e: self.password_entry.focus())
+        self.password_entry.bind('<Return>', lambda e: self.join())
         self.room_entry.bind('<Escape>', lambda e: self.close())
+        self.password_entry.bind('<Escape>', lambda e: self.close())
 
     def center_popup(self):
         # Center the popup relative to the parent window
@@ -114,7 +128,7 @@ class RoomPopup:
         parent_height = self.parent.winfo_height()
 
         popup_width = 400
-        popup_height = 250
+        popup_height = 320  # Increased height for password field
 
         x = parent_x + (parent_width - popup_width) // 2
         y = parent_y + (parent_height - popup_height) // 2
@@ -145,6 +159,9 @@ class RoomPopup:
 
     def join(self):
         room_name = self.room_entry.get().strip()
+        password = self.password_entry.get().strip()
+
         if room_name:
-            self.join_callback(room_name)
+            # Pass both room name and password (if provided) to the callback
+            self.join_callback(room_name, password if password else None)
             self.close()

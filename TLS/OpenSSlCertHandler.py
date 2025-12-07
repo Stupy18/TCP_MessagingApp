@@ -40,8 +40,7 @@ class OpenSSLCertHandler:
         if not self.private_key:
             raise Exception("Private key not loaded")
 
-        print(f"Signing data of length: {len(data)}")
-        print(f"First few bytes of data to sign: {data[:32].hex()}")
+
 
         try:
             signature = self.private_key.sign(
@@ -52,8 +51,6 @@ class OpenSSLCertHandler:
                 ),
                 hashes.SHA256()
             )
-            print(f"Generated signature length: {len(signature)}")
-            print(f"First few bytes of signature: {signature[:32].hex()}")
             return signature
         except Exception as e:
             print(f"Signing error: {str(e)}")
@@ -63,11 +60,6 @@ class OpenSSLCertHandler:
         """Verify signature using the certificate's public key"""
         if not self.certificate:
             raise Exception("Certificate not loaded")
-
-        print(f"Verifying signature of length: {len(signature)}")
-        print(f"Against data of length: {len(data)}")
-        print(f"First few bytes of data to verify: {data[:32].hex()}")
-        print(f"First few bytes of signature: {signature[:32].hex()}")
 
         try:
             self.certificate.public_key().verify(
